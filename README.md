@@ -38,7 +38,7 @@
             z-index: 9999;
             cursor: pointer;
             text-align: center;
-            transition: opacity 0.5s ease;
+            transition: opacity 0.3s ease;
         }
 
         #ui-layer {
@@ -47,6 +47,32 @@
             pointer-events: none;
             display: none;
             z-index: 10;
+        }
+
+        /* Indicador da Safe Zone */
+        #safe-timer-container {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: 2px solid #3b82f6;
+            color: white;
+            text-align: center;
+            pointer-events: none;
+        }
+
+        #safe-phase {
+            font-size: 12px;
+            text-transform: uppercase;
+            color: #60a5fa;
+        }
+
+        #safe-clock {
+            font-size: 24px;
+            font-weight: bold;
         }
 
         #stats-container {
@@ -162,13 +188,26 @@
             z-index: 1000;
             pointer-events: none;
         }
+
+        #storm-warning {
+            position: fixed;
+            top: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #ef4444;
+            font-weight: bold;
+            font-size: 24px;
+            text-shadow: 2px 2px 4px #000;
+            display: none;
+            pointer-events: none;
+        }
     </style>
 </head>
 <body>
-    <div id="start-overlay">
+    <div id="start-overlay" onclick="startGame()">
         <h1>FORTNITE PC EDITION</h1>
         <div id="instructions">
-            <p><strong>CLIQUE EM QUALQUER LUGAR PARA ENTRAR</strong></p>
+            <p><strong>CLIQUE AQUI PARA JOGAR</strong></p>
             <br>
             <p>W, A, S, D - Mover | ESPAÇO - Saltar</p>
             <p>CLIQUE ESQUERDO - Disparar ou Usar Picareta</p>
@@ -181,6 +220,13 @@
     <div id="crosshair"></div>
     
     <div id="ui-layer">
+        <div id="safe-timer-container">
+            <div id="safe-phase">Safe Zone - Fase 1/3</div>
+            <div id="safe-clock">05:00</div>
+        </div>
+
+        <div id="storm-warning">ESTÁS FORA DA SAFE ZONE!</div>
+
         <div id="stats-container">
             <div class="stat-group">
                 <div id="hp-container">
@@ -206,16 +252,19 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
 
         // Configurações do Firebase
-        const firebaseConfig = JSON.parse(__firebase_config);
+        let firebaseConfig = {};
+        try {
+            firebaseConfig = JSON.parse(__firebase_config);
+        } catch(e) { console.error("Config erro"); }
+        
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'fortnite-pc-stable';
         
         let db, auth, currentUser;
         let scene, camera, renderer, clock, raycaster;
-        let weaponGroup;
-        let gameStarted = false;
+        let weaponGroup, stormCircle;
         
         const localPlayer = {
-            id: 'local-' + Math.random().toString(36).substr(2, 5),
+            id: 'p-' + Math.random().toString(36).substr(2, 9),
             hp: 100,
             wood: 50,
             pos: { x: Math.random() * 20 - 10, y: 1.8, z: Math.random() * 20 - 10 },
@@ -224,18 +273,29 @@
             currentTool: 'pickaxe'
         };
 
+        // Lógica da Safe Zone
+        const safeZone = {
+            currentRadius: 150,
+            targetRadius: 150,
+            phases: [150, 100, 50, 10], // Tamanhos das fases
+            currentPhase: 0,
+            timer: 300, // 5 minutos em segundos
+            damage: 2,
+            centerX: 0,
+            centerZ: 0
+        };
+
         const remotePlayers = {};
         const wallObjects = {};
         const trees = [];
         const keys = {};
 
-        // 1. Inicializar Motor Gráfico (Não depende do Firebase)
         function initThreeJS() {
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x87ceeb);
-            scene.fog = new THREE.Fog(0x87ceeb, 20, 150);
+            scene.fog = new THREE.Fog(0x87ceeb, 20, 250);
 
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
             camera.position.set(localPlayer.pos.x, 1.8, localPlayer.pos.z);
             camera.rotation.order = 'YXZ';
 
@@ -253,30 +313,98 @@
             scene.add(sun);
 
             const ground = new THREE.Mesh(
-                new THREE.PlaneGeometry(2000, 2000),
+                new THREE.PlaneGeometry(5000, 5000),
                 new THREE.MeshPhongMaterial({ color: 0x4caf50 })
             );
             ground.rotation.x = -Math.PI / 2;
             scene.add(ground);
 
+            // Criar o círculo visual da Storm
+            const stormGeo = new THREE.RingGeometry(148, 150, 64);
+            const stormMat = new THREE.MeshBasicMaterial({ color: 0x3b82f6, side: THREE.DoubleSide });
+            stormCircle = new THREE.Mesh(stormGeo, stormMat);
+            stormCircle.rotation.x = -Math.PI / 2;
+            stormCircle.position.y = 0.1;
+            scene.add(stormCircle);
+
             generateEnvironment();
             createWeaponModel();
-            setupPointerLock();
+            
+            window.startGame = () => {
+                renderer.domElement.requestPointerLock();
+                const overlay = document.getElementById('start-overlay');
+                overlay.style.display = 'none';
+                document.getElementById('ui-layer').style.display = 'block';
+                document.getElementById('crosshair').style.display = 'block';
+                startSafeTimer();
+            };
+
+            setupControls();
             animate();
         }
 
-        // 2. Inicializar Firebase (Silencioso em background)
+        // Timer da Safe Zone
+        function startSafeTimer() {
+            setInterval(() => {
+                if (safeZone.timer > 0) {
+                    safeZone.timer--;
+                } else {
+                    // Fecha a safe se ainda houver fases
+                    if (safeZone.currentPhase < 3) {
+                        safeZone.currentPhase++;
+                        safeZone.targetRadius = safeZone.phases[safeZone.currentPhase];
+                        safeZone.timer = 300; // Reinicia 5 minutos
+                        
+                        document.getElementById('safe-phase').innerText = `Safe Zone - Fase ${Math.min(safeZone.currentPhase + 1, 3)}/3`;
+                    }
+                }
+                updateClockUI();
+                checkStormDamage();
+            }, 1000);
+        }
+
+        function updateClockUI() {
+            const mins = Math.floor(safeZone.timer / 60);
+            const secs = safeZone.timer % 60;
+            document.getElementById('safe-clock').innerText = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        function checkStormDamage() {
+            const dist = Math.sqrt(
+                Math.pow(camera.position.x - safeZone.centerX, 2) + 
+                Math.pow(camera.position.z - safeZone.centerZ, 2)
+            );
+
+            const warning = document.getElementById('storm-warning');
+            if (dist > safeZone.currentRadius) {
+                localPlayer.hp -= safeZone.damage;
+                warning.style.display = 'block';
+                updateUI();
+                if (localPlayer.hp <= 0) {
+                    alert("Morreste na Storm!");
+                    location.reload();
+                }
+            } else {
+                warning.style.display = 'none';
+            }
+        }
+
         async function initFirebase() {
+            if (typeof __firebase_config === 'undefined') return;
             try {
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
 
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
+                const initAuth = async () => {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                };
+                
+                await initAuth();
                 
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
@@ -286,7 +414,7 @@
                     }
                 });
             } catch (e) {
-                console.warn("Ligação ao Firebase falhou. Modo offline ativo.", e);
+                console.warn("Offline mode active.");
             }
         }
 
@@ -303,23 +431,21 @@
                     if (id === localPlayer.id) {
                         localPlayer.hp = data.hp ?? 100;
                         updateUI();
-                        if (localPlayer.hp <= 0) location.reload();
                         return;
                     }
                     if (change.type === "added" || change.type === "modified") {
                         if (!remotePlayers[id]) {
                             const m = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 1), new THREE.MeshPhongMaterial({ color: 0xff4444 }));
-                            m.userData = { id, type: 'player' };
                             scene.add(m);
                             remotePlayers[id] = m;
                         }
                         if (data.pos) remotePlayers[id].position.set(data.pos.x, data.pos.y, data.pos.z);
-                        remotePlayers[id].userData.hp = data.hp;
+                        remotePlayers[id].userData = { id, type: 'player', hp: data.hp };
                     } else if (change.type === "removed") {
                         if (remotePlayers[id]) { scene.remove(remotePlayers[id]); delete remotePlayers[id]; }
                     }
                 });
-            }, (err) => console.log("Firebase Players Busy"));
+            }, (err) => {});
 
             onSnapshot(wallsCol, (snap) => {
                 snap.docChanges().forEach(change => {
@@ -330,17 +456,15 @@
                             const wall = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 0.4), new THREE.MeshPhongMaterial({ color: 0x795548 }));
                             wall.position.set(data.x, data.y, data.z);
                             wall.rotation.y = data.ry;
-                            wall.userData = { id, type: 'wall', hp: data.hp };
                             scene.add(wall);
                             wallObjects[id] = wall;
-                        } else {
-                            wallObjects[id].userData.hp = data.hp;
                         }
+                        wallObjects[id].userData = { id, type: 'wall', hp: data.hp };
                     } else if (change.type === "removed") {
                         if (wallObjects[id]) { scene.remove(wallObjects[id]); delete wallObjects[id]; }
                     }
                 });
-            }, (err) => console.log("Firebase Walls Busy"));
+            }, (err) => {});
 
             setInterval(() => {
                 if (!db || !currentUser) return;
@@ -348,40 +472,22 @@
                     pos: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
                     hp: localPlayer.hp,
                     ts: Date.now()
-                }, { merge: true }).catch(() => {});
-            }, 100);
+                }, { merge: true }).catch(()=>{});
+            }, 150);
         }
 
-        function setupPointerLock() {
-            const canvas = renderer.domElement;
-            const overlay = document.getElementById('start-overlay');
-            const ui = document.getElementById('ui-layer');
-            const crosshair = document.getElementById('crosshair');
-
-            // CORREÇÃO CRUCIAL: Remover tela roxa imediatamente ao clicar
-            overlay.addEventListener('click', () => {
-                canvas.requestPointerLock();
-                // Forçar desaparecimento se o evento PointerLock demorar
-                overlay.style.opacity = '0';
-                setTimeout(() => overlay.style.display = 'none', 500);
-            });
-
+        function setupControls() {
             document.addEventListener('pointerlockchange', () => {
-                if (document.pointerLockElement === canvas) {
+                const overlay = document.getElementById('start-overlay');
+                if (document.pointerLockElement === renderer.domElement) {
                     overlay.style.display = 'none';
-                    ui.style.display = 'block';
-                    crosshair.style.display = 'block';
-                    gameStarted = true;
                 } else {
                     overlay.style.display = 'flex';
-                    overlay.style.opacity = '1';
-                    ui.style.display = 'none';
-                    crosshair.style.display = 'none';
                 }
             });
 
             document.addEventListener('mousemove', (e) => {
-                if (document.pointerLockElement === canvas) {
+                if (document.pointerLockElement === renderer.domElement) {
                     camera.rotation.y -= e.movementX * 0.0025;
                     camera.rotation.x -= e.movementY * 0.0025;
                     camera.rotation.x = Math.max(-1.5, Math.min(1.5, camera.rotation.x));
@@ -395,7 +501,7 @@
             });
             window.addEventListener('keyup', (e) => keys[e.code] = false);
             window.addEventListener('mousedown', (e) => { 
-                if(document.pointerLockElement === canvas && e.button === 0) handleAction(); 
+                if(document.pointerLockElement === renderer.domElement && e.button === 0) handleAction(); 
             });
         }
 
@@ -407,7 +513,6 @@
             weaponGroup.position.set(0.35, -0.3, -0.4);
             weaponGroup.visible = false;
             camera.add(weaponGroup);
-            scene.add(camera);
         }
 
         function generateEnvironment() {
@@ -415,12 +520,13 @@
             const leafGeo = new THREE.ConeGeometry(2, 6);
             const tMat = new THREE.MeshPhongMaterial({ color: 0x5d4037 });
             const lMat = new THREE.MeshPhongMaterial({ color: 0x2e7d32 });
-            for (let i = 0; i < 60; i++) {
+            for (let i = 0; i < 150; i++) {
                 const tree = new THREE.Group();
                 const t = new THREE.Mesh(trunkGeo, tMat); t.position.y = 2.5;
                 const l = new THREE.Mesh(leafGeo, lMat); l.position.y = 6;
                 tree.add(t, l);
-                tree.position.set(Math.random() * 400 - 200, 0, Math.random() * 400 - 200);
+                // Árvores espalhadas por uma área maior
+                tree.position.set(Math.random() * 800 - 400, 0, Math.random() * 800 - 400);
                 scene.add(tree);
                 trees.push(tree);
             }
@@ -448,7 +554,7 @@
                 });
             }
 
-            if (!db) return; // Proteção modo offline
+            if (!db) return;
 
             const targets = [...Object.values(remotePlayers), ...Object.values(wallObjects)];
             const hits = raycaster.intersectObjects(targets);
@@ -472,7 +578,6 @@
             if (localPlayer.wood < 10) return;
             localPlayer.wood -= 10;
             document.getElementById('wood-val').innerText = localPlayer.wood;
-            
             const dir = new THREE.Vector3(0, 0, -5).applyQuaternion(camera.quaternion);
             const pos = new THREE.Vector3().copy(camera.position).add(dir);
             
@@ -481,7 +586,6 @@
                     x: pos.x, y: 1.5, z: pos.z, ry: camera.rotation.y, hp: 100 
                 }).catch(()=>{});
             } else {
-                // Feedback visual local mesmo offline
                 const wall = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 0.4), new THREE.MeshPhongMaterial({ color: 0x795548 }));
                 wall.position.set(pos.x, 1.5, pos.z);
                 wall.rotation.y = camera.rotation.y;
@@ -491,11 +595,20 @@
 
         function updateUI() {
             document.getElementById('hp-bar-fill').style.width = localPlayer.hp + "%";
-            document.getElementById('hp-val').innerText = Math.ceil(localPlayer.hp);
+            document.getElementById('hp-val').innerText = Math.max(0, Math.ceil(localPlayer.hp));
         }
 
         function animate() {
             requestAnimationFrame(animate);
+            
+            // Suavizar o fecho da Safe Zone visualmente
+            if (safeZone.currentRadius > safeZone.targetRadius) {
+                safeZone.currentRadius -= 0.05;
+                // Atualizar escala do anel visual
+                const s = safeZone.currentRadius / 150;
+                stormCircle.scale.set(s, s, 1);
+            }
+
             if (document.pointerLockElement === renderer.domElement) {
                 const speed = 0.15;
                 const dirY = camera.rotation.y;
