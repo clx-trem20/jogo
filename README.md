@@ -125,15 +125,15 @@
         <h1 style="font-size: 5rem; font-weight: 900; font-style: italic; letter-spacing: -2px; margin-bottom: 0;">FORTNITE</h1>
         <p style="color: #a78bfa; font-weight: bold; margin-bottom: 20px;">PC EDITION MULTIPLAYER</p>
         <div id="lobby-container">
-            <h3 id="my-id-display" style="color: #fcd34d; font-family: monospace; margin-bottom: 20px; font-size: 20px;">---</h3>
+            <h3 id="my-id-display" style="color: #fcd34d; font-family: monospace; margin-bottom: 20px; font-size: 20px;">GERANDO ID...</h3>
             <input type="text" id="room-input" placeholder="NOME DA SALA (EX: PROS)">
-            <button class="btn-play" onclick="joinGame()">ENTRAR NO CAMPO DE BATALHA</button>
+            <button class="btn-play" id="play-button" onclick="joinGame()">ENTRAR NO CAMPO DE BATALHA</button>
             <p style="font-size: 12px; color: #94a3b8; margin-top: 20px;">Controlos: WASD (Mover) | SHIFT (Correr) | ESPAÇO (Saltar) | G (Consumir) | 1, 2, 3 (Itens)</p>
         </div>
     </div>
     
     <div id="crosshair"></div>
-    <div id="debug-log">A aguardar conexão...</div>
+    <div id="debug-log">A aguardar sistema...</div>
     <div id="kill-feed"></div>
     <div id="interaction-prompt">Pressiona [G] para comer cogumelo 🍄</div>
     
@@ -170,7 +170,8 @@
         import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, updateDoc, addDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
 
-        const firebaseConfig = JSON.parse(__firebase_config);
+        // CONFIGURAÇÕES GLOBAIS
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'fortnite-full-v1';
         
         let db, auth, currentUser;
@@ -199,6 +200,7 @@
         const mushrooms = []; 
         const keys = {};
 
+        // Mostrar ID imediatamente
         document.getElementById('my-id-display').innerText = localPlayer.visualId;
 
         function log(msg) {
@@ -216,7 +218,11 @@
             document.getElementById('crosshair').style.display = 'block';
             
             startSafeCycle();
-            await setupNetworking();
+            if (db && currentUser) {
+                await setupNetworking();
+            } else {
+                log("A jogar em modo Offline (Sem Firebase)");
+            }
         };
 
         function initThreeJS() {
@@ -251,7 +257,7 @@
             ground.receiveShadow = true;
             scene.add(ground);
 
-            // Storm Visual (Anel)
+            // Storm Visual
             const stormGeo = new THREE.TorusGeometry(200, 2, 16, 100);
             const stormMat = new THREE.MeshBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.6 });
             stormVisual = new THREE.Mesh(stormGeo, stormMat);
@@ -268,18 +274,34 @@
         }
 
         async function initFirebase() {
+            if (!firebaseConfig) {
+                log("Sem config Firebase. Modo Offline.");
+                return;
+            }
             try {
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
-                onAuthStateChanged(auth, u => { if(u) currentUser = u; });
-                log("Firebase Conectado.");
-            } catch (e) { log("Erro Firebase: " + e.message); }
+
+                const performSignIn = async () => {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        return await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        return await signInAnonymously(auth);
+                    }
+                };
+
+                await performSignIn();
+                onAuthStateChanged(auth, u => { 
+                    if(u) {
+                        currentUser = u;
+                        log("Firebase Conectado: " + u.uid.substring(0,5));
+                    }
+                });
+            } catch (e) { 
+                log("Erro Firebase: " + e.message); 
+                console.error(e);
+            }
         }
 
         async function setupNetworking() {
@@ -317,7 +339,7 @@
                     }
                 });
                 document.getElementById('player-count').innerText = Object.keys(remotePlayers).length + 1;
-            });
+            }, (err) => console.log("Erro Sync Jogadores"));
 
             onSnapshot(wallsCol, (snap) => {
                 snap.docChanges().forEach(change => {
@@ -343,7 +365,7 @@
                     }
                 });
                 document.getElementById('wall-count').innerText = Object.keys(wallObjects).length;
-            });
+            }, (err) => console.log("Erro Sync Paredes"));
 
             setInterval(() => {
                 if(!currentUser) return;
@@ -353,15 +375,14 @@
                     visualId: localPlayer.visualId,
                     ts: Date.now()
                 }, { merge: true });
-            }, 200);
+            }, 500);
         }
 
         function generateTrees() {
             for (let i = 0; i < 80; i++) {
                 const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.6, 5), new THREE.MeshStandardMaterial({ color: 0x5d4037 }));
                 const leaves = new THREE.Mesh(new THREE.ConeGeometry(3, 8, 8), new THREE.MeshStandardMaterial({ color: 0x1b5e20 }));
-                trunk.position.y = 2.5;
-                leaves.position.y = 7;
+                trunk.position.y = 2.5; leaves.position.y = 7;
                 const tree = new THREE.Group();
                 tree.add(trunk, leaves);
                 tree.position.set(Math.random()*600-300, 0, Math.random()*600-300);
@@ -453,19 +474,16 @@
                 target.material.color.setHex(0xffffff);
                 setTimeout(() => target.material.color.setHex(oldColor), 60);
 
-                if (target.userData.type === 'wall') {
+                if (target.userData.type === 'wall' && db) {
                     const id = target.userData.id;
                     const wallDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'walls', id);
                     const snap = await getDoc(wallDocRef);
                     if(snap.exists()) {
                         const currentHp = snap.data().hp - damage;
-                        if (currentHp <= 0) {
-                            await deleteDoc(wallDocRef);
-                        } else {
-                            await updateDoc(wallDocRef, { hp: currentHp });
-                        }
+                        if (currentHp <= 0) { await deleteDoc(wallDocRef); } 
+                        else { await updateDoc(wallDocRef, { hp: currentHp }); }
                     }
-                } else {
+                } else if (db) {
                     for (const [id, mesh] of Object.entries(remotePlayers)) {
                         if (mesh === target) {
                             await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', id), { damageTaken: damage });
@@ -481,16 +499,24 @@
             const dir = new THREE.Vector3(0, 0, -5).applyQuaternion(camera.quaternion);
             const pos = new THREE.Vector3().copy(camera.position).add(dir);
             
-            try {
-                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'walls'), {
-                    x: pos.x, y: 1.5, z: pos.z, ry: camera.rotation.y,
-                    roomId: currentRoomId, 
-                    hp: 100, 
-                    ts: Date.now()
-                });
-                localPlayer.wood -= 10;
-                document.getElementById('wood-val').innerText = localPlayer.wood;
-            } catch(e) { log("Erro Construção"); }
+            if (db) {
+                try {
+                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'walls'), {
+                        x: pos.x, y: 1.5, z: pos.z, ry: camera.rotation.y,
+                        roomId: currentRoomId, hp: 100, ts: Date.now()
+                    });
+                } catch(e) { log("Erro Construção DB"); }
+            } else {
+                // Modo offline build local apenas
+                const wallGeo = new THREE.BoxGeometry(4, 3, 0.4);
+                const wallMat = new THREE.MeshStandardMaterial({ color: 0x8b4513 });
+                const wall = new THREE.Mesh(wallGeo, wallMat);
+                wall.position.set(pos.x, 1.5, pos.z);
+                wall.rotation.y = camera.rotation.y;
+                scene.add(wall);
+            }
+            localPlayer.wood -= 10;
+            document.getElementById('wood-val').innerText = localPlayer.wood;
         }
 
         function setupControls() {
@@ -530,10 +556,7 @@
             const hp = Math.max(0, localPlayer.hp);
             document.getElementById('hp-bar-fill').style.width = Math.min(100, hp) + "%";
             document.getElementById('hp-val').innerText = Math.ceil(hp);
-            if (hp <= 0) {
-                alert("Eliminado!");
-                location.reload();
-            }
+            if (hp <= 0) { alert("Eliminado!"); location.reload(); }
         }
 
         function checkCollision(newPos) {
@@ -575,29 +598,22 @@
                     localPlayer.isGrounded = false;
                 }
 
-                // Lógica de Interação com Cogumelos
                 let nearMushroom = false;
                 const prompt = document.getElementById('interaction-prompt');
 
                 for (let i = mushrooms.length - 1; i >= 0; i--) {
                     const mush = mushrooms[i];
                     const dist = camera.position.distanceTo(mush.position);
-                    
                     if (dist < 2.5) { 
                         nearMushroom = true;
-                        if (keys['KeyG']) {
-                            if (localPlayer.hp < 100) {
-                                localPlayer.hp = Math.min(100, localPlayer.hp + 10);
-                                updateHPUI();
-                                scene.remove(mush);
-                                mushrooms.splice(i, 1);
-                                log("+10 HP Consumido");
-                            }
+                        if (keys['KeyG'] && localPlayer.hp < 100) {
+                            localPlayer.hp = Math.min(100, localPlayer.hp + 10);
+                            updateHPUI();
+                            scene.remove(mush);
+                            mushrooms.splice(i, 1);
                         }
                     }
                 }
-                
-                // Mostrar/Esconder aviso visual
                 prompt.style.display = nearMushroom ? 'block' : 'none';
             }
 
@@ -612,7 +628,10 @@
             renderer.render(scene, camera);
         }
 
-        window.onload = () => { initThreeJS(); initFirebase(); };
+        window.onload = () => { 
+            initThreeJS(); 
+            initFirebase(); 
+        };
         window.onresize = () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
