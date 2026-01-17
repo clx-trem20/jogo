@@ -3,320 +3,211 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fortnite PC Multiplayer - Lobby System</title>
+    <title>Fortnite PC Edition - Full Multiplayer</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body, html { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; user-select: none; }
+        canvas { display: block; }
 
-        body, html {
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            background: #000;
-            font-family: 'Segoe UI', sans-serif;
-            user-select: none;
-        }
-
-        canvas {
-            display: block;
-        }
-
-        /* Camada de Início */
+        /* Overlay de Início */
         #start-overlay {
-            position: fixed;
-            inset: 0;
-            background: linear-gradient(135deg, #6d28d9 0%, #4c1d95 100%);
-            color: white;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            z-index: 9999;
-            text-align: center;
+            position: fixed; inset: 0;
+            background: linear-gradient(135deg, #4c1d95 0%, #1e1b4b 100%);
+            color: white; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; z-index: 9999; text-align: center;
         }
 
         #lobby-container {
-            background: rgba(0,0,0,0.4);
-            padding: 30px;
-            border-radius: 15px;
-            margin-top: 20px;
-            width: 350px;
+            background: rgba(255, 255, 255, 0.1); padding: 40px; border-radius: 20px;
+            margin-top: 20px; width: 450px; backdrop-filter: blur(15px);
+            border: 1px solid rgba(255,255,255,0.2); box-shadow: 0 10px 40px rgba(0,0,0,0.6);
         }
 
         input {
-            width: 100%;
-            padding: 12px;
-            margin: 10px 0;
-            border-radius: 8px;
-            border: none;
-            font-size: 16px;
-            text-align: center;
+            width: 100%; padding: 15px; margin: 15px 0; border-radius: 10px;
+            border: 2px solid rgba(255,255,255,0.2); font-size: 18px; text-align: center;
+            background: rgba(0,0,0,0.4); color: #fcd34d; text-transform: uppercase; font-weight: bold;
         }
 
         .btn-play {
-            background: #fcd34d;
-            color: #000;
-            border: none;
-            padding: 15px 30px;
-            font-weight: bold;
-            font-size: 18px;
-            border-radius: 8px;
-            cursor: pointer;
-            width: 100%;
-            transition: transform 0.2s;
+            background: linear-gradient(to right, #f59e0b, #d97706);
+            color: white; border: none; padding: 20px; font-weight: 900;
+            font-size: 22px; border-radius: 12px; cursor: pointer; width: 100%;
+            text-transform: uppercase; letter-spacing: 2px; transition: transform 0.2s;
+        }
+        .btn-play:hover { transform: scale(1.03); filter: brightness(1.1); }
+
+        /* Interface de Jogo */
+        #ui-layer { position: fixed; inset: 0; pointer-events: none; display: none; z-index: 10; }
+        
+        #room-info { 
+            position: absolute; top: 25px; left: 25px; 
+            background: rgba(0,0,0,0.7); color: #fff; padding: 12px 20px; 
+            border-radius: 8px; border-left: 5px solid #fcd34d; font-family: monospace;
         }
 
-        .btn-play:hover {
-            transform: scale(1.05);
-            background: #fbbf24;
-        }
-
-        #ui-layer {
-            position: fixed;
-            inset: 0;
-            pointer-events: none;
-            display: none;
-            z-index: 10;
-        }
-
-        /* Indicador da Safe Zone */
         #safe-timer-container {
-            position: absolute;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.7);
-            padding: 10px 20px;
-            border-radius: 8px;
-            border: 2px solid #3b82f6;
-            color: white;
-            text-align: center;
+            position: absolute; top: 25px; left: 50%; transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8); padding: 12px 30px; border-radius: 15px;
+            border: 2px solid #3b82f6; color: white; text-align: center; min-width: 200px;
         }
-
-        #room-info {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            background: rgba(0,0,0,0.6);
-            color: white;
-            padding: 10px;
-            border-radius: 8px;
-            font-size: 14px;
-        }
-
-        #safe-clock {
-            font-size: 24px;
-            font-weight: bold;
-        }
-
-        #stats-container {
-            position: absolute;
-            bottom: 30px;
-            left: 50%;
-            transform: translateX(-50%);
-            display: flex;
-            align-items: flex-end;
-            gap: 20px;
-        }
-
-        #hp-container {
-            width: 250px;
-            height: 30px;
-            background: rgba(0,0,0,0.6);
-            border: 2px solid rgba(255,255,255,0.3);
-            border-radius: 4px;
-            overflow: hidden;
-            position: relative;
-        }
-
-        #hp-bar-fill {
-            width: 100%;
-            height: 100%;
-            background: #4ade80;
-            transition: width 0.3s ease;
-        }
-
-        #hp-text {
-            position: absolute;
-            inset: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: bold;
-            text-shadow: 1px 1px 2px #000;
-        }
-
-        .resource-box {
-            background: rgba(0,0,0,0.7);
-            padding: 10px 20px;
-            border-radius: 4px;
-            color: #fff;
-            font-weight: bold;
-            border-bottom: 4px solid #fcd34d;
-        }
-
-        #hotbar {
-            position: absolute;
-            bottom: 30px;
-            right: 30px;
-            display: flex;
-            gap: 10px;
-        }
-
-        .hotbar-slot {
-            width: 60px;
-            height: 60px;
-            background: rgba(0,0,0,0.6);
-            border: 2px solid rgba(255,255,255,0.2);
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 20px;
-        }
-
-        .hotbar-slot.active {
-            border-color: #fcd34d;
-            background: rgba(252, 211, 77, 0.2);
-        }
-
-        #crosshair {
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            width: 20px;
-            height: 20px;
-            transform: translate(-50%, -50%);
-            pointer-events: none;
-            z-index: 5;
-            display: none;
-        }
-
-        #crosshair::before, #crosshair::after {
-            content: '';
-            position: absolute;
-            background: rgba(255, 255, 255, 0.8);
-        }
-
-        #crosshair::before { top: 50%; left: 0; width: 100%; height: 2px; transform: translateY(-50%); }
-        #crosshair::after { left: 50%; top: 0; height: 100%; width: 2px; transform: translateX(-50%); }
-
-        .flash-effect {
-            position: fixed;
-            inset: 0;
-            background: #fff;
-            opacity: 0.2;
-            z-index: 1000;
-            pointer-events: none;
-        }
+        #safe-clock { font-size: 32px; font-weight: 900; font-family: 'Courier New', Courier, monospace; }
+        #safe-phase { font-size: 14px; color: #93c5fd; text-transform: uppercase; letter-spacing: 1px; }
 
         #storm-warning {
-            position: fixed;
-            top: 100px;
-            left: 50%;
-            transform: translateX(-50%);
-            color: #ef4444;
-            font-weight: bold;
-            font-size: 24px;
-            text-shadow: 2px 2px 4px #000;
-            display: none;
+            position: fixed; top: 140px; left: 50%; transform: translateX(-50%);
+            color: #ef4444; font-weight: 900; font-size: 36px;
+            text-shadow: 0 0 15px rgba(0,0,0,0.9); display: none;
+            animation: pulse 0.8s infinite;
         }
+
+        /* Aviso de Interação */
+        #interaction-prompt {
+            position: fixed; bottom: 200px; left: 50%; transform: translateX(-50%);
+            background: rgba(0,0,0,0.8); color: white; padding: 10px 20px;
+            border-radius: 5px; font-weight: bold; border: 1px solid #fcd34d;
+            display: none; z-index: 100;
+        }
+
+        @keyframes pulse { 0% { opacity: 1; transform: translateX(-50%) scale(1); } 50% { opacity: 0.6; transform: translateX(-50%) scale(1.05); } 100% { opacity: 1; transform: translateX(-50%) scale(1); } }
+
+        #stats-container { 
+            position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); 
+            display: flex; align-items: flex-end; gap: 25px; pointer-events: auto; 
+        }
+        
+        #hp-container { 
+            width: 300px; height: 35px; background: rgba(0,0,0,0.7); 
+            border: 2px solid rgba(255,255,255,0.4); border-radius: 6px; overflow: hidden; position: relative; 
+        }
+        #hp-bar-fill { width: 100%; height: 100%; background: linear-gradient(to right, #22c55e, #4ade80); transition: width 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        #hp-text { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: white; font-weight: 900; text-shadow: 1px 1px 2px #000; font-size: 18px; }
+        
+        .resource-box { 
+            background: rgba(0,0,0,0.8); padding: 12px 25px; border-radius: 8px; 
+            color: #fff; font-weight: 900; border-bottom: 5px solid #fcd34d; font-size: 20px;
+        }
+
+        #hotbar { position: absolute; bottom: 40px; right: 40px; display: flex; gap: 12px; pointer-events: auto; }
+        .hotbar-slot { 
+            width: 75px; height: 75px; background: rgba(0,0,0,0.7); 
+            border: 3px solid #444; border-radius: 12px; display: flex; 
+            align-items: center; justify-content: center; font-size: 32px; 
+            cursor: pointer; transition: all 0.2s; position: relative;
+        }
+        .hotbar-slot::after {
+            content: attr(data-key); position: absolute; top: 5px; left: 5px;
+            font-size: 12px; color: #888; font-weight: bold;
+        }
+        .hotbar-slot.active { border-color: #fcd34d; background: rgba(252, 211, 77, 0.2); transform: translateY(-10px); box-shadow: 0 0 20px rgba(252, 211, 77, 0.4); }
+
+        #crosshair { 
+            position: fixed; top: 50%; left: 50%; width: 24px; height: 24px; 
+            transform: translate(-50%, -50%); pointer-events: none; z-index: 5; display: none; 
+        }
+        #crosshair::before { content: ''; position: absolute; background: #fff; top: 50%; left: 0; width: 100%; height: 2px; }
+        #crosshair::after { content: ''; position: absolute; background: #fff; left: 50%; top: 0; height: 100%; width: 2px; }
+
+        #debug-log { position: fixed; top: 120px; left: 25px; color: #0f0; font-family: monospace; font-size: 11px; pointer-events: none; background: rgba(0,0,0,0.6); padding: 8px; border-radius: 4px; }
+        .flash { position: fixed; inset: 0; background: white; opacity: 0.2; pointer-events: none; z-index: 100; }
+
+        #kill-feed {
+            position: fixed; top: 25px; right: 25px; width: 250px;
+            display: flex; flex-direction: column; gap: 5px; pointer-events: none;
+        }
+        .kill-item { background: rgba(0,0,0,0.6); color: white; padding: 8px; border-radius: 4px; font-size: 13px; border-right: 4px solid #ef4444; animation: slideIn 0.3s forwards; }
+        @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
     </style>
 </head>
 <body>
     <div id="start-overlay">
-        <h1>FORTNITE PC EDITION</h1>
+        <h1 style="font-size: 5rem; font-weight: 900; font-style: italic; letter-spacing: -2px; margin-bottom: 0;">FORTNITE</h1>
+        <p style="color: #a78bfa; font-weight: bold; margin-bottom: 20px;">PC EDITION MULTIPLAYER</p>
         <div id="lobby-container">
-            <p>O TEU ID: <strong id="my-id-display">...</strong></p>
-            <input type="text" id="room-input" placeholder="ID DO AMIGO OU NOME DA SALA">
-            <button class="btn-play" onclick="joinGame()">ENTRAR NO MAPA</button>
-            <p style="font-size: 12px; margin-top: 10px; opacity: 0.8;">Deixa em branco para jogar sozinho ou espera amigos entrarem no teu ID.</p>
+            <h3 id="my-id-display" style="color: #fcd34d; font-family: monospace; margin-bottom: 20px; font-size: 20px;">---</h3>
+            <input type="text" id="room-input" placeholder="NOME DA SALA (EX: PROS)">
+            <button class="btn-play" onclick="joinGame()">ENTRAR NO CAMPO DE BATALHA</button>
+            <p style="font-size: 12px; color: #94a3b8; margin-top: 20px;">Controlos: WASD (Mover) | SHIFT (Correr) | ESPAÇO (Saltar) | G (Consumir) | 1, 2, 3 (Itens)</p>
         </div>
     </div>
     
     <div id="crosshair"></div>
+    <div id="debug-log">A aguardar conexão...</div>
+    <div id="kill-feed"></div>
+    <div id="interaction-prompt">Pressiona [G] para comer cogumelo 🍄</div>
     
     <div id="ui-layer">
-        <div id="room-info">SALA: <span id="current-room-id">---</span></div>
+        <div id="room-info">
+            SALA: <span id="current-room-id" style="color: #fcd34d;">---</span><br>
+            PAREDES: <span id="wall-count">0</span> | JOGADORES: <span id="player-count">1</span>
+        </div>
+
         <div id="safe-timer-container">
-            <div id="safe-phase">Safe Zone - Fase 1/3</div>
+            <div id="safe-phase">Safe Zone - Fase 1</div>
             <div id="safe-clock">05:00</div>
         </div>
 
-        <div id="storm-warning">ESTÁS FORA DA SAFE ZONE!</div>
+        <div id="storm-warning">⚠️ ESTÁS NA TEMPESTADE! ⚠️</div>
 
         <div id="stats-container">
-            <div class="stat-group">
-                <div id="hp-container">
-                    <div id="hp-bar-fill"></div>
-                    <div id="hp-text"><span id="hp-val">100</span> HP</div>
-                </div>
-            </div>
-            <div class="resource-box">
-                🪵 <span id="wood-val">50</span>
+            <div class="resource-box">🪵 <span id="wood-val">50</span></div>
+            <div id="hp-container">
+                <div id="hp-bar-fill"></div>
+                <div id="hp-text"><span id="hp-val">100</span> HP</div>
             </div>
         </div>
 
         <div id="hotbar">
-            <div id="slot-1" class="hotbar-slot active">⛏️</div>
-            <div id="slot-2" class="hotbar-slot">🔫</div>
-            <div id="slot-3" class="hotbar-slot">🧱</div>
+            <div id="slot-1" class="hotbar-slot active" data-key="1" onclick="swapTool('pickaxe')">⛏️</div>
+            <div id="slot-2" class="hotbar-slot" data-key="2" onclick="swapTool('gun')">🔫</div>
+            <div id="slot-3" class="hotbar-slot" data-key="3" onclick="swapTool('build')">🧱</div>
         </div>
     </div>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
-        import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, updateDoc, addDoc, query, where } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, updateDoc, addDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
 
-        let firebaseConfig = {};
-        try { firebaseConfig = JSON.parse(__firebase_config); } catch(e) { console.error("Config erro"); }
-        
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'fortnite-pc-stable';
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'fortnite-full-v1';
         
         let db, auth, currentUser;
-        let scene, camera, renderer, clock, raycaster;
-        let weaponGroup, stormCircle;
-        let currentRoomId = "";
-        
+        let scene, camera, renderer, raycaster, clock;
+        let weaponGroup, stormVisual;
+        let currentRoomId = "GLOBAL"; 
+
         const localPlayer = {
-            id: 'ID-' + Math.random().toString(36).substr(2, 6).toUpperCase(),
-            hp: 100,
-            wood: 50,
-            pos: { x: Math.random() * 40 - 20, y: 1.8, z: Math.random() * 40 - 20 },
-            velocity: 0,
-            isGrounded: true,
-            currentTool: 'pickaxe'
+            hp: 100, wood: 50,
+            pos: { x: Math.random()*40-20, y: 1.8, z: Math.random()*40-20 },
+            velocity: 0, isGrounded: true, currentTool: 'pickaxe',
+            visualId: 'ID-' + Math.random().toString(36).substr(2, 4).toUpperCase()
         };
 
         const safeZone = {
-            currentRadius: 150,
-            targetRadius: 150,
-            phases: [150, 100, 50, 10], 
-            currentPhase: 0,
-            timer: 300, 
-            damage: 2,
-            centerX: 0,
-            centerZ: 0
+            centerX: 0, centerZ: 0,
+            currentRadius: 200, targetRadius: 200,
+            phases: [200, 120, 60, 15, 0],
+            currentPhaseIndex: 0,
+            timer: 300
         };
 
-        const remotePlayers = {};
         const wallObjects = {}; 
+        const remotePlayers = {};
         const trees = [];
+        const mushrooms = []; 
         const keys = {};
 
-        // Exibir ID local no menu
-        document.getElementById('my-id-display').innerText = localPlayer.id;
+        document.getElementById('my-id-display').innerText = localPlayer.visualId;
 
-        window.joinGame = () => {
+        function log(msg) {
+            document.getElementById('debug-log').innerText = msg;
+        }
+
+        window.joinGame = async () => {
             const input = document.getElementById('room-input').value.trim();
-            currentRoomId = input || localPlayer.id;
+            currentRoomId = input ? input.toUpperCase() : "GLOBAL";
             document.getElementById('current-room-id').innerText = currentRoomId;
             
             renderer.domElement.requestPointerLock();
@@ -324,14 +215,14 @@
             document.getElementById('ui-layer').style.display = 'block';
             document.getElementById('crosshair').style.display = 'block';
             
-            startSafeTimer();
-            setupNetworking();
+            startSafeCycle();
+            await setupNetworking();
         };
 
         function initThreeJS() {
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x87ceeb);
-            scene.fog = new THREE.Fog(0x87ceeb, 20, 250);
+            scene.fog = new THREE.Fog(0x87ceeb, 20, 600);
 
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
             camera.position.set(localPlayer.pos.x, 1.8, localPlayer.pos.z);
@@ -339,175 +230,270 @@
 
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true;
             document.body.appendChild(renderer.domElement);
 
             raycaster = new THREE.Raycaster();
             clock = new THREE.Clock();
 
+            // Luzes
             scene.add(new THREE.AmbientLight(0xffffff, 0.6));
             const sun = new THREE.DirectionalLight(0xffffff, 1.0);
-            sun.position.set(50, 100, 50);
+            sun.position.set(100, 200, 100);
+            sun.castShadow = true;
             scene.add(sun);
 
-            const ground = new THREE.Mesh(
-                new THREE.PlaneGeometry(5000, 5000),
-                new THREE.MeshPhongMaterial({ color: 0x4caf50 })
-            );
+            // Chão
+            const groundGeo = new THREE.PlaneGeometry(2000, 2000);
+            const groundMat = new THREE.MeshStandardMaterial({ color: 0x3d9940, roughness: 0.8 });
+            const ground = new THREE.Mesh(groundGeo, groundMat);
             ground.rotation.x = -Math.PI / 2;
+            ground.receiveShadow = true;
             scene.add(ground);
 
-            const stormGeo = new THREE.RingGeometry(148, 150, 64);
-            const stormMat = new THREE.MeshBasicMaterial({ color: 0x3b82f6, side: THREE.DoubleSide, transparent: true, opacity: 0.5 });
-            stormCircle = new THREE.Mesh(stormGeo, stormMat);
-            stormCircle.rotation.x = -Math.PI / 2;
-            stormCircle.position.y = 0.1;
-            scene.add(stormCircle);
+            // Storm Visual (Anel)
+            const stormGeo = new THREE.TorusGeometry(200, 2, 16, 100);
+            const stormMat = new THREE.MeshBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.6 });
+            stormVisual = new THREE.Mesh(stormGeo, stormMat);
+            stormVisual.rotation.x = Math.PI/2;
+            stormVisual.position.y = 0.5;
+            scene.add(stormVisual);
 
-            generateEnvironment();
+            generateTrees();
+            generateMushrooms(); 
             createWeaponModel();
             setupControls();
             animate();
-        }
-
-        function startSafeTimer() {
-            setInterval(() => {
-                if (safeZone.timer > 0) {
-                    safeZone.timer--;
-                } else {
-                    if (safeZone.currentPhase < 3) {
-                        safeZone.currentPhase++;
-                        safeZone.targetRadius = safeZone.phases[safeZone.currentPhase];
-                        safeZone.timer = 300; 
-                        document.getElementById('safe-phase').innerText = `Safe Zone - Fase ${Math.min(safeZone.currentPhase + 1, 3)}/3`;
-                    }
-                }
-                updateClockUI();
-                checkStormDamage();
-            }, 1000);
-        }
-
-        function updateClockUI() {
-            const mins = Math.floor(safeZone.timer / 60);
-            const secs = safeZone.timer % 60;
-            document.getElementById('safe-clock').innerText = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-        }
-
-        function checkStormDamage() {
-            const dist = Math.sqrt(
-                Math.pow(camera.position.x - safeZone.centerX, 2) + 
-                Math.pow(camera.position.z - safeZone.centerZ, 2)
-            );
-
-            const warning = document.getElementById('storm-warning');
-            if (dist > safeZone.currentRadius) {
-                localPlayer.hp -= safeZone.damage;
-                warning.style.display = 'block';
-                updateUI();
-                if (localPlayer.hp <= 0) location.reload();
-            } else {
-                warning.style.display = 'none';
-            }
+            log("Motor Gráfico Pronto.");
         }
 
         async function initFirebase() {
-            if (typeof __firebase_config === 'undefined') return;
             try {
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
-
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token);
                 } else {
                     await signInAnonymously(auth);
                 }
-                
-                onAuthStateChanged(auth, (user) => {
-                    if (user) {
-                        currentUser = user;
-                        // Mantemos o ID visual amigável para o Lobby, mas usamos o UID para Firebase
-                    }
-                });
-            } catch (e) { console.warn("Modo Offline."); }
+                onAuthStateChanged(auth, u => { if(u) currentUser = u; });
+                log("Firebase Conectado.");
+            } catch (e) { log("Erro Firebase: " + e.message); }
         }
 
-        function setupNetworking() {
+        async function setupNetworking() {
             if (!db || !currentUser) return;
 
-            // Filtramos as coleções pelo roomId para que grupos diferentes não se vejam
             const playersCol = collection(db, 'artifacts', appId, 'public', 'data', 'players');
             const wallsCol = collection(db, 'artifacts', appId, 'public', 'data', 'walls');
 
-            // Ouvir apenas jogadores da mesma sala
             onSnapshot(playersCol, (snap) => {
                 snap.docChanges().forEach(change => {
                     const data = change.doc.data();
                     const id = change.doc.id;
-                    
-                    if (data.roomId !== currentRoomId) return;
                     if (id === currentUser.uid) {
-                        localPlayer.hp = data.hp ?? 100;
-                        updateUI();
+                        if (data.damageTaken) {
+                            localPlayer.hp -= data.damageTaken;
+                            updateHPUI();
+                            updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', id), { damageTaken: 0 });
+                        }
+                        return;
+                    }
+                    if (data.roomId !== currentRoomId) {
+                        if (remotePlayers[id]) { scene.remove(remotePlayers[id]); delete remotePlayers[id]; }
                         return;
                     }
 
                     if (change.type === "added" || change.type === "modified") {
                         if (!remotePlayers[id]) {
-                            const m = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 1), new THREE.MeshPhongMaterial({ color: 0xff4444 }));
-                            scene.add(m);
-                            remotePlayers[id] = m;
+                            const pGeo = new THREE.CapsuleGeometry(0.5, 1, 4, 8);
+                            const pMat = new THREE.MeshStandardMaterial({ color: 0xff4444 });
+                            const p = new THREE.Mesh(pGeo, pMat);
+                            scene.add(p);
+                            remotePlayers[id] = p;
                         }
-                        if (data.pos) remotePlayers[id].position.set(data.pos.x, data.pos.y, data.pos.z);
-                        remotePlayers[id].userData = { id, type: 'player', hp: data.hp };
-                    } else if (change.type === "removed") {
-                        if (remotePlayers[id]) { scene.remove(remotePlayers[id]); delete remotePlayers[id]; }
+                        remotePlayers[id].position.set(data.pos.x, data.pos.y - 0.9, data.pos.z);
                     }
                 });
+                document.getElementById('player-count').innerText = Object.keys(remotePlayers).length + 1;
             });
 
-            // Ouvir apenas paredes da mesma sala
             onSnapshot(wallsCol, (snap) => {
                 snap.docChanges().forEach(change => {
-                    const id = change.doc.id;
                     const data = change.doc.data();
-
+                    const id = change.doc.id;
                     if (data.roomId !== currentRoomId) return;
 
                     if (change.type === "added" || change.type === "modified") {
                         if (!wallObjects[id]) {
-                            const wall = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 0.4), new THREE.MeshPhongMaterial({ color: 0x795548 }));
+                            const wallGeo = new THREE.BoxGeometry(4, 3, 0.4);
+                            const wallMat = new THREE.MeshStandardMaterial({ color: 0x8b4513, roughness: 0.9 });
+                            const wall = new THREE.Mesh(wallGeo, wallMat);
+                            wall.position.set(data.x, data.y, data.z);
+                            wall.rotation.y = data.ry;
+                            wall.userData = { id, type: 'wall', hp: data.hp };
                             scene.add(wall);
                             wallObjects[id] = wall;
+                        } else {
+                            wallObjects[id].userData.hp = data.hp;
                         }
-                        wallObjects[id].position.set(data.x, data.y, data.z);
-                        wallObjects[id].rotation.y = data.ry;
-                        wallObjects[id].userData = { id, type: 'wall', hp: data.hp };
                     } else if (change.type === "removed") {
                         if (wallObjects[id]) { scene.remove(wallObjects[id]); delete wallObjects[id]; }
                     }
                 });
+                document.getElementById('wall-count').innerText = Object.keys(wallObjects).length;
             });
 
-            // Enviar posição com Room ID
             setInterval(() => {
-                if (!db || !currentUser) return;
+                if(!currentUser) return;
                 setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', currentUser.uid), {
                     pos: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
-                    hp: localPlayer.hp,
                     roomId: currentRoomId,
+                    visualId: localPlayer.visualId,
                     ts: Date.now()
-                }, { merge: true }).catch(()=>{});
-            }, 100);
+                }, { merge: true });
+            }, 200);
+        }
+
+        function generateTrees() {
+            for (let i = 0; i < 80; i++) {
+                const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.6, 5), new THREE.MeshStandardMaterial({ color: 0x5d4037 }));
+                const leaves = new THREE.Mesh(new THREE.ConeGeometry(3, 8, 8), new THREE.MeshStandardMaterial({ color: 0x1b5e20 }));
+                trunk.position.y = 2.5;
+                leaves.position.y = 7;
+                const tree = new THREE.Group();
+                tree.add(trunk, leaves);
+                tree.position.set(Math.random()*600-300, 0, Math.random()*600-300);
+                scene.add(tree);
+                trees.push(tree);
+            }
+        }
+
+        function generateMushrooms() {
+            for (let i = 0; i < 120; i++) {
+                const mushroom = new THREE.Group();
+                const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.3, 8), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+                stem.position.y = 0.15;
+                const cap = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xff0000 }));
+                cap.position.y = 0.3;
+                mushroom.add(stem, cap);
+                mushroom.position.set(Math.random() * 800 - 400, 0, Math.random() * 800 - 400);
+                scene.add(mushroom);
+                mushrooms.push(mushroom);
+            }
+        }
+
+        function createWeaponModel() {
+            weaponGroup = new THREE.Group();
+            const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.15, 0.8), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+            const grip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.3, 0.15), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+            grip.position.set(0, -0.2, 0.2);
+            weaponGroup.add(barrel, grip);
+            weaponGroup.position.set(0.4, -0.4, -0.6);
+            weaponGroup.visible = false;
+            camera.add(weaponGroup);
+        }
+
+        function startSafeCycle() {
+            setInterval(() => {
+                if (safeZone.timer > 0) {
+                    safeZone.timer--;
+                } else {
+                    if (safeZone.currentPhaseIndex < safeZone.phases.length - 1) {
+                        safeZone.currentPhaseIndex++;
+                        safeZone.targetRadius = safeZone.phases[safeZone.currentPhaseIndex];
+                        safeZone.timer = 300;
+                        document.getElementById('safe-phase').innerText = `Safe Zone - Fase ${safeZone.currentPhaseIndex + 1}`;
+                    }
+                }
+                updateUI();
+                processStormDamage();
+            }, 1000);
+        }
+
+        function processStormDamage() {
+            const dist = Math.sqrt(Math.pow(camera.position.x - safeZone.centerX, 2) + Math.pow(camera.position.z - safeZone.centerZ, 2));
+            const warning = document.getElementById('storm-warning');
+            if (dist > safeZone.currentRadius) {
+                localPlayer.hp -= 3;
+                warning.style.display = 'block';
+                updateHPUI();
+            } else {
+                warning.style.display = 'none';
+            }
+        }
+
+        async function handleAction() {
+            if (localPlayer.currentTool === 'build') { buildWall(); return; }
+
+            const f = document.createElement('div'); f.className = 'flash';
+            document.body.appendChild(f); setTimeout(()=>f.remove(), 40);
+
+            raycaster.setFromCamera({x:0, y:0}, camera);
+
+            if (localPlayer.currentTool === 'pickaxe') {
+                trees.forEach(t => {
+                    if (camera.position.distanceTo(t.position) < 7) {
+                        localPlayer.wood += 5;
+                        document.getElementById('wood-val').innerText = localPlayer.wood;
+                        t.scale.set(0.9, 1.1, 0.9);
+                        setTimeout(() => t.scale.set(1, 1, 1), 100);
+                    }
+                });
+            }
+
+            const hits = raycaster.intersectObjects([...Object.values(wallObjects), ...Object.values(remotePlayers)]);
+
+            if (hits.length > 0) {
+                const target = hits[0].object;
+                const damage = 10; 
+
+                const oldColor = target.material.color.getHex();
+                target.material.color.setHex(0xffffff);
+                setTimeout(() => target.material.color.setHex(oldColor), 60);
+
+                if (target.userData.type === 'wall') {
+                    const id = target.userData.id;
+                    const wallDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'walls', id);
+                    const snap = await getDoc(wallDocRef);
+                    if(snap.exists()) {
+                        const currentHp = snap.data().hp - damage;
+                        if (currentHp <= 0) {
+                            await deleteDoc(wallDocRef);
+                        } else {
+                            await updateDoc(wallDocRef, { hp: currentHp });
+                        }
+                    }
+                } else {
+                    for (const [id, mesh] of Object.entries(remotePlayers)) {
+                        if (mesh === target) {
+                            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', id), { damageTaken: damage });
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        async function buildWall() {
+            if (localPlayer.wood < 10) return;
+            const dir = new THREE.Vector3(0, 0, -5).applyQuaternion(camera.quaternion);
+            const pos = new THREE.Vector3().copy(camera.position).add(dir);
+            
+            try {
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'walls'), {
+                    x: pos.x, y: 1.5, z: pos.z, ry: camera.rotation.y,
+                    roomId: currentRoomId, 
+                    hp: 100, 
+                    ts: Date.now()
+                });
+                localPlayer.wood -= 10;
+                document.getElementById('wood-val').innerText = localPlayer.wood;
+            } catch(e) { log("Erro Construção"); }
         }
 
         function setupControls() {
-            document.addEventListener('pointerlockchange', () => {
-                if (document.pointerLockElement !== renderer.domElement) {
-                    document.getElementById('start-overlay').style.display = 'flex';
-                }
-            });
-
             document.addEventListener('mousemove', (e) => {
                 if (document.pointerLockElement === renderer.domElement) {
                     camera.rotation.y -= e.movementX * 0.0025;
@@ -515,145 +501,119 @@
                     camera.rotation.x = Math.max(-1.5, Math.min(1.5, camera.rotation.x));
                 }
             });
-
             window.addEventListener('keydown', (e) => { 
                 keys[e.code] = true; 
-                if(e.code === 'KeyQ') buildWall(); 
-                if(e.code === 'Digit1' || e.code === 'Digit2' || e.code === 'KeyE') swapTool(); 
+                if(e.code === 'Digit1') swapTool('pickaxe');
+                if(e.code === 'Digit2') swapTool('gun');
+                if(e.code === 'Digit3' || e.code === 'KeyQ') swapTool('build');
             });
             window.addEventListener('keyup', (e) => keys[e.code] = false);
-            window.addEventListener('mousedown', (e) => { 
-                if(document.pointerLockElement === renderer.domElement && e.button === 0) handleAction(); 
-            });
+            window.addEventListener('mousedown', () => { if(document.pointerLockElement === renderer.domElement) handleAction(); });
         }
 
-        function createWeaponModel() {
-            weaponGroup = new THREE.Group();
-            const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.6), new THREE.MeshPhongMaterial({ color: 0x333 }));
-            barrel.rotation.x = Math.PI/2; barrel.position.z = -0.3;
-            weaponGroup.add(barrel);
-            weaponGroup.position.set(0.35, -0.3, -0.4);
-            weaponGroup.visible = false;
-            camera.add(weaponGroup);
-        }
-
-        function generateEnvironment() {
-            const trunkGeo = new THREE.CylinderGeometry(0.4, 0.5, 5);
-            const leafGeo = new THREE.ConeGeometry(2, 6);
-            const tMat = new THREE.MeshPhongMaterial({ color: 0x5d4037 });
-            const lMat = new THREE.MeshPhongMaterial({ color: 0x2e7d32 });
-            for (let i = 0; i < 150; i++) {
-                const tree = new THREE.Group();
-                const t = new THREE.Mesh(trunkGeo, tMat); t.position.y = 2.5;
-                const l = new THREE.Mesh(leafGeo, lMat); l.position.y = 6;
-                tree.add(t, l);
-                tree.position.set(Math.random() * 800 - 400, 0, Math.random() * 800 - 400);
-                scene.add(tree);
-                trees.push(tree);
-            }
-        }
-
-        function swapTool() {
-            localPlayer.currentTool = localPlayer.currentTool === 'pickaxe' ? 'gun' : 'pickaxe';
-            weaponGroup.visible = (localPlayer.currentTool === 'gun');
-            document.getElementById('slot-1').classList.toggle('active', localPlayer.currentTool === 'pickaxe');
-            document.getElementById('slot-2').classList.toggle('active', localPlayer.currentTool === 'gun');
-        }
-
-        async function handleAction() {
-            const flash = document.createElement('div'); flash.className = 'flash-effect';
-            document.body.appendChild(flash); setTimeout(() => flash.remove(), 50);
-
-            raycaster.setFromCamera({x:0, y:0}, camera);
-            raycaster.far = localPlayer.currentTool === 'pickaxe' ? 8 : 200;
-
-            if (localPlayer.currentTool === 'pickaxe') {
-                trees.forEach(tree => {
-                    if (camera.position.distanceTo(tree.position) < 8) {
-                        localPlayer.wood += 5;
-                        document.getElementById('wood-val').innerText = localPlayer.wood;
-                    }
-                });
-            }
-
-            if (!db) return;
-
-            const targets = [...Object.values(remotePlayers), ...Object.values(wallObjects)];
-            const hits = raycaster.intersectObjects(targets);
-            
-            if (hits.length > 0) {
-                const obj = hits[0].object;
-                const userData = obj.userData;
-                if (!userData || !userData.id) return;
-
-                const dmg = localPlayer.currentTool === 'gun' ? 30 : 25;
-
-                if (userData.type === 'player') {
-                    updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', userData.id), {
-                        hp: Math.max(0, (userData.hp || 100) - dmg)
-                    }).catch(()=>{});
-                } else if (userData.type === 'wall') {
-                    const wallRef = doc(db, 'artifacts', appId, 'public', 'data', 'walls', userData.id);
-                    const newHp = (userData.hp || 100) - dmg;
-                    if (newHp <= 0) deleteDoc(wallRef).catch(()=>{});
-                    else updateDoc(wallRef, { hp: newHp }).catch(()=>{});
-                }
-            }
-        }
-
-        async function buildWall() {
-            if (localPlayer.wood < 10) return;
-            localPlayer.wood -= 10;
-            document.getElementById('wood-val').innerText = localPlayer.wood;
-            
-            const dir = new THREE.Vector3(0, 0, -5).applyQuaternion(camera.quaternion);
-            const pos = new THREE.Vector3().copy(camera.position).add(dir);
-            
-            if (db && currentUser) {
-                addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'walls'), { 
-                    x: pos.x, y: 1.5, z: pos.z, ry: camera.rotation.y, 
-                    hp: 100, roomId: currentRoomId, owner: currentUser.uid
-                }).catch(()=>{});
-            }
-        }
+        window.swapTool = (tool) => {
+            localPlayer.currentTool = tool;
+            weaponGroup.visible = (tool === 'gun');
+            document.querySelectorAll('.hotbar-slot').forEach(s => s.classList.remove('active'));
+            if(tool==='pickaxe') document.getElementById('slot-1').classList.add('active');
+            if(tool==='gun') document.getElementById('slot-2').classList.add('active');
+            if(tool==='build') document.getElementById('slot-3').classList.add('active');
+        };
 
         function updateUI() {
-            document.getElementById('hp-bar-fill').style.width = localPlayer.hp + "%";
-            document.getElementById('hp-val').innerText = Math.max(0, Math.ceil(localPlayer.hp));
+            const mins = Math.floor(safeZone.timer / 60);
+            const secs = safeZone.timer % 60;
+            document.getElementById('safe-clock').innerText = `${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}`;
+        }
+
+        function updateHPUI() {
+            const hp = Math.max(0, localPlayer.hp);
+            document.getElementById('hp-bar-fill').style.width = Math.min(100, hp) + "%";
+            document.getElementById('hp-val').innerText = Math.ceil(hp);
+            if (hp <= 0) {
+                alert("Eliminado!");
+                location.reload();
+            }
+        }
+
+        function checkCollision(newPos) {
+            const pBox = new THREE.Box3().setFromCenterAndSize(newPos, new THREE.Vector3(1, 2, 1));
+            for (const id in wallObjects) {
+                const wBox = new THREE.Box3().setFromObject(wallObjects[id]);
+                if (pBox.intersectsBox(wBox)) return true;
+            }
+            return false;
         }
 
         function animate() {
             requestAnimationFrame(animate);
+
             if (safeZone.currentRadius > safeZone.targetRadius) {
-                safeZone.currentRadius -= 0.05;
-                const s = safeZone.currentRadius / 150;
-                stormCircle.scale.set(s, s, 1);
+                safeZone.currentRadius -= 0.04;
+                stormVisual.scale.set(safeZone.currentRadius / 200, safeZone.currentRadius / 200, 1);
             }
 
             if (document.pointerLockElement === renderer.domElement) {
-                const speed = 0.15;
-                const dirY = camera.rotation.y;
-                const fwd = new THREE.Vector3(-Math.sin(dirY), 0, -Math.cos(dirY));
-                const rgt = new THREE.Vector3(Math.cos(dirY), 0, -Math.sin(dirY));
-                if (keys['KeyW']) camera.position.addScaledVector(fwd, speed);
-                if (keys['KeyS']) camera.position.addScaledVector(fwd, -speed);
-                if (keys['KeyA']) camera.position.addScaledVector(rgt, -speed);
-                if (keys['KeyD']) camera.position.addScaledVector(rgt, speed);
-                if (keys['Space'] && localPlayer.isGrounded) { localPlayer.velocity = 0.22; localPlayer.isGrounded = false; }
+                const speed = keys['ShiftLeft'] ? 0.35 : 0.15;
+                const rot = camera.rotation.y;
+                let dx = 0, dz = 0;
+
+                if (keys['KeyW']) { dx -= Math.sin(rot)*speed; dz -= Math.cos(rot)*speed; }
+                if (keys['KeyS']) { dx += Math.sin(rot)*speed; dz += Math.cos(rot)*speed; }
+                if (keys['KeyA']) { dx -= Math.cos(rot)*speed; dz += Math.sin(rot)*speed; }
+                if (keys['KeyD']) { dx += Math.cos(rot)*speed; dz -= Math.sin(rot)*speed; }
+                
+                const nextPos = camera.position.clone();
+                nextPos.x += dx; nextPos.z += dz;
+                if (!checkCollision(nextPos)) {
+                    camera.position.x = nextPos.x;
+                    camera.position.z = nextPos.z;
+                }
+
+                if (keys['Space'] && localPlayer.isGrounded) {
+                    localPlayer.velocity = 0.22;
+                    localPlayer.isGrounded = false;
+                }
+
+                // Lógica de Interação com Cogumelos
+                let nearMushroom = false;
+                const prompt = document.getElementById('interaction-prompt');
+
+                for (let i = mushrooms.length - 1; i >= 0; i--) {
+                    const mush = mushrooms[i];
+                    const dist = camera.position.distanceTo(mush.position);
+                    
+                    if (dist < 2.5) { 
+                        nearMushroom = true;
+                        if (keys['KeyG']) {
+                            if (localPlayer.hp < 100) {
+                                localPlayer.hp = Math.min(100, localPlayer.hp + 10);
+                                updateHPUI();
+                                scene.remove(mush);
+                                mushrooms.splice(i, 1);
+                                log("+10 HP Consumido");
+                            }
+                        }
+                    }
+                }
+                
+                // Mostrar/Esconder aviso visual
+                prompt.style.display = nearMushroom ? 'block' : 'none';
             }
+
             localPlayer.velocity -= 0.01;
             camera.position.y += localPlayer.velocity;
-            if (camera.position.y <= 1.8) { camera.position.y = 1.8; localPlayer.velocity = 0; localPlayer.isGrounded = true; }
+            if (camera.position.y <= 1.8) {
+                camera.position.y = 1.8;
+                localPlayer.velocity = 0;
+                localPlayer.isGrounded = true;
+            }
+
             renderer.render(scene, camera);
         }
 
-        window.onload = () => {
-            initThreeJS();
-            initFirebase();
-        };
-
+        window.onload = () => { initThreeJS(); initFirebase(); };
         window.onresize = () => {
-            if (!camera) return;
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
