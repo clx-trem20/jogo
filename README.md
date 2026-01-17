@@ -125,7 +125,7 @@
         <h1 style="font-size: 5rem; font-weight: 900; font-style: italic; letter-spacing: -2px; margin-bottom: 0;">FORTNITE</h1>
         <p style="color: #a78bfa; font-weight: bold; margin-bottom: 20px;">PC EDITION MULTIPLAYER</p>
         <div id="lobby-container">
-            <h3 id="my-id-display" style="color: #fcd34d; font-family: monospace; margin-bottom: 20px; font-size: 20px;">A INICIALIZAR...</h3>
+            <h3 id="my-id-display" style="color: #fcd34d; font-family: monospace; margin-bottom: 20px; font-size: 20px;">A LIGAR AO SERVIDOR...</h3>
             <input type="text" id="room-input" placeholder="NOME DA SALA (EX: PROS)">
             <button class="btn-play" id="play-button" onclick="joinGame()">ENTRAR NO CAMPO DE BATALHA</button>
             <p style="font-size: 12px; color: #94a3b8; margin-top: 20px;">Controlos: WASD (Mover) | SHIFT (Correr) | ESPAÇO (Saltar) | G (Consumir) | 1, 2, 3 (Itens)</p>
@@ -178,6 +178,7 @@
         let scene, camera, renderer, raycaster, clock;
         let weaponGroup, stormVisual;
         let currentRoomId = ""; 
+        let isJoining = false;
 
         const localPlayer = {
             hp: 100, wood: 50,
@@ -205,13 +206,24 @@
         }
 
         window.joinGame = async () => {
+            if (isJoining) return;
+            isJoining = true;
+
             const input = document.getElementById('room-input').value.trim();
             currentRoomId = input ? input.toUpperCase() : "GLOBAL";
             
-            // Bloquear rato
-            renderer.domElement.requestPointerLock();
+            // UI de carregamento
+            document.getElementById('play-button').innerText = "A ENTRAR...";
             
-            // UI
+            // Aguardar pelo Auth se ainda estiver a inicializar
+            let attempts = 0;
+            while (!currentUser && attempts < 20) {
+                await new Promise(r => setTimeout(r, 250));
+                attempts++;
+            }
+
+            // Iniciar Jogo
+            renderer.domElement.requestPointerLock();
             document.getElementById('start-overlay').style.display = 'none';
             document.getElementById('ui-layer').style.display = 'block';
             document.getElementById('crosshair').style.display = 'block';
@@ -219,11 +231,10 @@
             
             startSafeCycle();
             
-            // Networking
             if (db && currentUser) {
                 await setupNetworking();
             } else {
-                log("Jogando Offline (Firebase não carregou)");
+                log("Jogando Offline (Modo Convidado)");
             }
         };
 
@@ -272,12 +283,12 @@
             createWeaponModel();
             setupControls();
             animate();
-            log("Motor 3D Pronto");
+            log("Gráficos Prontos");
         }
 
         async function initFirebase() {
             if (!firebaseConfig) {
-                log("Ambiente local detetado.");
+                log("Configuração Firebase ausente.");
                 return;
             }
             try {
@@ -285,22 +296,23 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
 
-                const initAuth = async () => {
-                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                        await signInWithCustomToken(auth, __initial_auth_token);
-                    } else {
-                        await signInAnonymously(auth);
-                    }
-                };
-
-                await initAuth();
                 onAuthStateChanged(auth, u => { 
                     if(u) {
                         currentUser = u;
-                        document.getElementById('my-id-display').innerText = "O TEU ID: " + u.uid.substring(0, 8).toUpperCase();
-                        log("Conectado como " + u.uid.substring(0,5));
+                        const shortId = u.uid.substring(0, 8).toUpperCase();
+                        document.getElementById('my-id-display').innerText = "O TEU ID: " + shortId;
+                        log("Ligado: " + shortId);
+                    } else {
+                        log("A autenticar...");
+                        signInAnonymously(auth).catch(e => log("Erro Auth: " + e.message));
                     }
                 });
+
+                // Tentar login imediato se o token existir
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                }
+
             } catch (e) { 
                 log("Erro Firebase: " + e.message); 
             }
@@ -309,21 +321,19 @@
         async function setupNetworking() {
             if (!db || !currentUser) return;
 
-            // 1. Limpar estado anterior (caso troquem de sala no futuro sem recarregar)
+            // Reset local
             Object.keys(remotePlayers).forEach(id => { scene.remove(remotePlayers[id]); delete remotePlayers[id]; });
             Object.keys(wallObjects).forEach(id => { scene.remove(wallObjects[id]); delete wallObjects[id]; });
 
-            // 2. Referências das Coleções
             const playersCol = collection(db, 'artifacts', appId, 'public', 'data', 'players');
             const wallsCol = collection(db, 'artifacts', appId, 'public', 'data', 'walls');
 
-            // 3. Sync de Jogadores
+            // Sync Jogadores
             onSnapshot(playersCol, (snap) => {
                 snap.docChanges().forEach(change => {
                     const data = change.doc.data();
                     const id = change.doc.id;
 
-                    // Ignorar o próprio jogador na renderização remota
                     if (id === currentUser.uid) {
                         if (data.damageTaken > 0) {
                             localPlayer.hp -= data.damageTaken;
@@ -333,12 +343,8 @@
                         return;
                     }
 
-                    // Filtrar por Sala (Manual para evitar erros de indexação complexa no Firestore)
                     if (data.roomId !== currentRoomId) {
-                        if (remotePlayers[id]) { 
-                            scene.remove(remotePlayers[id]); 
-                            delete remotePlayers[id]; 
-                        }
+                        if (remotePlayers[id]) { scene.remove(remotePlayers[id]); delete remotePlayers[id]; }
                         return;
                     }
 
@@ -358,7 +364,7 @@
                 document.getElementById('player-count').innerText = Object.keys(remotePlayers).length + 1;
             }, (err) => console.error("Erro Jogadores:", err));
 
-            // 4. Sync de Paredes
+            // Sync Paredes
             onSnapshot(wallsCol, (snap) => {
                 snap.docChanges().forEach(change => {
                     const data = change.doc.data();
@@ -386,7 +392,7 @@
                 document.getElementById('wall-count').innerText = Object.keys(wallObjects).length;
             }, (err) => console.error("Erro Paredes:", err));
 
-            // 5. Loop de Update de Posição
+            // Heartbeat
             setInterval(() => {
                 if(!currentUser) return;
                 setDoc(doc(playersCol, currentUser.uid), {
@@ -469,13 +475,11 @@
         async function handleAction() {
             if (localPlayer.currentTool === 'build') { buildWall(); return; }
 
-            // Efeito Visual
             const f = document.createElement('div'); f.className = 'flash';
             document.body.appendChild(f); setTimeout(()=>f.remove(), 40);
 
             raycaster.setFromCamera({x:0, y:0}, camera);
 
-            // Coletar Madeira
             if (localPlayer.currentTool === 'pickaxe') {
                 trees.forEach(t => {
                     if (camera.position.distanceTo(t.position) < 7) {
@@ -487,14 +491,12 @@
                 });
             }
 
-            // Atacar Jogadores/Paredes
             const hits = raycaster.intersectObjects([...Object.values(wallObjects), ...Object.values(remotePlayers)]);
 
             if (hits.length > 0) {
                 const target = hits[0].object;
                 const damage = (localPlayer.currentTool === 'gun') ? 20 : 10; 
 
-                // Feedback visual de acerto
                 const oldColor = target.material.color.getHex();
                 target.material.color.setHex(0xffffff);
                 setTimeout(() => target.material.color.setHex(oldColor), 60);
