@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fortnite PC Multiplayer</title>
+    <title>Fortnite PC Multiplayer - Lobby System</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
         * {
@@ -25,7 +25,7 @@
             display: block;
         }
 
-        /* Camada de Início - A "Tela Roxa" */
+        /* Camada de Início */
         #start-overlay {
             position: fixed;
             inset: 0;
@@ -36,9 +36,43 @@
             align-items: center;
             justify-content: center;
             z-index: 9999;
-            cursor: pointer;
             text-align: center;
-            transition: opacity 0.3s ease;
+        }
+
+        #lobby-container {
+            background: rgba(0,0,0,0.4);
+            padding: 30px;
+            border-radius: 15px;
+            margin-top: 20px;
+            width: 350px;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            border-radius: 8px;
+            border: none;
+            font-size: 16px;
+            text-align: center;
+        }
+
+        .btn-play {
+            background: #fcd34d;
+            color: #000;
+            border: none;
+            padding: 15px 30px;
+            font-weight: bold;
+            font-size: 18px;
+            border-radius: 8px;
+            cursor: pointer;
+            width: 100%;
+            transition: transform 0.2s;
+        }
+
+        .btn-play:hover {
+            transform: scale(1.05);
+            background: #fbbf24;
         }
 
         #ui-layer {
@@ -61,13 +95,17 @@
             border: 2px solid #3b82f6;
             color: white;
             text-align: center;
-            pointer-events: none;
         }
 
-        #safe-phase {
-            font-size: 12px;
-            text-transform: uppercase;
-            color: #60a5fa;
+        #room-info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.6);
+            color: white;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 14px;
         }
 
         #safe-clock {
@@ -83,7 +121,6 @@
             display: flex;
             align-items: flex-end;
             gap: 20px;
-            pointer-events: none;
         }
 
         #hp-container {
@@ -138,7 +175,6 @@
             border: 2px solid rgba(255,255,255,0.2);
             border-radius: 8px;
             display: flex;
-            flex-direction: column;
             align-items: center;
             justify-content: center;
             color: white;
@@ -171,15 +207,6 @@
         #crosshair::before { top: 50%; left: 0; width: 100%; height: 2px; transform: translateY(-50%); }
         #crosshair::after { left: 50%; top: 0; height: 100%; width: 2px; transform: translateX(-50%); }
 
-        #instructions {
-            margin-top: 20px;
-            font-size: 14px;
-            background: rgba(0,0,0,0.3);
-            padding: 20px;
-            border-radius: 10px;
-            line-height: 1.6;
-        }
-
         .flash-effect {
             position: fixed;
             inset: 0;
@@ -199,27 +226,24 @@
             font-size: 24px;
             text-shadow: 2px 2px 4px #000;
             display: none;
-            pointer-events: none;
         }
     </style>
 </head>
 <body>
-    <div id="start-overlay" onclick="startGame()">
+    <div id="start-overlay">
         <h1>FORTNITE PC EDITION</h1>
-        <div id="instructions">
-            <p><strong>CLIQUE AQUI PARA JOGAR</strong></p>
-            <br>
-            <p>W, A, S, D - Mover | ESPAÇO - Saltar</p>
-            <p>CLIQUE ESQUERDO - Disparar ou Usar Picareta</p>
-            <p>Q - Construir Parede (Custo: 10 Madeira)</p>
-            <p>1 / 2 ou E - Trocar Item</p>
-            <p>ESC - Menu / Libertar Rato</p>
+        <div id="lobby-container">
+            <p>O TEU ID: <strong id="my-id-display">...</strong></p>
+            <input type="text" id="room-input" placeholder="ID DO AMIGO OU NOME DA SALA">
+            <button class="btn-play" onclick="joinGame()">ENTRAR NO MAPA</button>
+            <p style="font-size: 12px; margin-top: 10px; opacity: 0.8;">Deixa em branco para jogar sozinho ou espera amigos entrarem no teu ID.</p>
         </div>
     </div>
     
     <div id="crosshair"></div>
     
     <div id="ui-layer">
+        <div id="room-info">SALA: <span id="current-room-id">---</span></div>
         <div id="safe-timer-container">
             <div id="safe-phase">Safe Zone - Fase 1/3</div>
             <div id="safe-clock">05:00</div>
@@ -248,26 +272,24 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
-        import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, updateDoc, addDoc } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, updateDoc, addDoc, query, where } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
 
-        // Configurações do Firebase
         let firebaseConfig = {};
-        try {
-            firebaseConfig = JSON.parse(__firebase_config);
-        } catch(e) { console.error("Config erro"); }
+        try { firebaseConfig = JSON.parse(__firebase_config); } catch(e) { console.error("Config erro"); }
         
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'fortnite-pc-stable';
         
         let db, auth, currentUser;
         let scene, camera, renderer, clock, raycaster;
         let weaponGroup, stormCircle;
+        let currentRoomId = "";
         
         const localPlayer = {
-            id: 'p-' + Math.random().toString(36).substr(2, 9),
+            id: 'ID-' + Math.random().toString(36).substr(2, 6).toUpperCase(),
             hp: 100,
             wood: 50,
-            pos: { x: Math.random() * 20 - 10, y: 1.8, z: Math.random() * 20 - 10 },
+            pos: { x: Math.random() * 40 - 20, y: 1.8, z: Math.random() * 40 - 20 },
             velocity: 0,
             isGrounded: true,
             currentTool: 'pickaxe'
@@ -285,9 +307,26 @@
         };
 
         const remotePlayers = {};
-        const wallObjects = {}; // Mapeia ID -> Mesh da parede
+        const wallObjects = {}; 
         const trees = [];
         const keys = {};
+
+        // Exibir ID local no menu
+        document.getElementById('my-id-display').innerText = localPlayer.id;
+
+        window.joinGame = () => {
+            const input = document.getElementById('room-input').value.trim();
+            currentRoomId = input || localPlayer.id;
+            document.getElementById('current-room-id').innerText = currentRoomId;
+            
+            renderer.domElement.requestPointerLock();
+            document.getElementById('start-overlay').style.display = 'none';
+            document.getElementById('ui-layer').style.display = 'block';
+            document.getElementById('crosshair').style.display = 'block';
+            
+            startSafeTimer();
+            setupNetworking();
+        };
 
         function initThreeJS() {
             scene = new THREE.Scene();
@@ -319,7 +358,7 @@
             scene.add(ground);
 
             const stormGeo = new THREE.RingGeometry(148, 150, 64);
-            const stormMat = new THREE.MeshBasicMaterial({ color: 0x3b82f6, side: THREE.DoubleSide });
+            const stormMat = new THREE.MeshBasicMaterial({ color: 0x3b82f6, side: THREE.DoubleSide, transparent: true, opacity: 0.5 });
             stormCircle = new THREE.Mesh(stormGeo, stormMat);
             stormCircle.rotation.x = -Math.PI / 2;
             stormCircle.position.y = 0.1;
@@ -327,16 +366,6 @@
 
             generateEnvironment();
             createWeaponModel();
-            
-            window.startGame = () => {
-                renderer.domElement.requestPointerLock();
-                const overlay = document.getElementById('start-overlay');
-                overlay.style.display = 'none';
-                document.getElementById('ui-layer').style.display = 'block';
-                document.getElementById('crosshair').style.display = 'block';
-                startSafeTimer();
-            };
-
             setupControls();
             animate();
         }
@@ -375,9 +404,7 @@
                 localPlayer.hp -= safeZone.damage;
                 warning.style.display = 'block';
                 updateUI();
-                if (localPlayer.hp <= 0) {
-                    location.reload();
-                }
+                if (localPlayer.hp <= 0) location.reload();
             } else {
                 warning.style.display = 'none';
             }
@@ -390,43 +417,41 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
 
-                const initAuth = async () => {
-                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                        await signInWithCustomToken(auth, __initial_auth_token);
-                    } else {
-                        await signInAnonymously(auth);
-                    }
-                };
-                
-                await initAuth();
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
                 
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
                         currentUser = user;
-                        localPlayer.id = user.uid;
-                        setupNetworking();
+                        // Mantemos o ID visual amigável para o Lobby, mas usamos o UID para Firebase
                     }
                 });
-            } catch (e) {
-                console.warn("Offline mode active.");
-            }
+            } catch (e) { console.warn("Modo Offline."); }
         }
 
         function setupNetworking() {
             if (!db || !currentUser) return;
 
+            // Filtramos as coleções pelo roomId para que grupos diferentes não se vejam
             const playersCol = collection(db, 'artifacts', appId, 'public', 'data', 'players');
             const wallsCol = collection(db, 'artifacts', appId, 'public', 'data', 'walls');
 
+            // Ouvir apenas jogadores da mesma sala
             onSnapshot(playersCol, (snap) => {
                 snap.docChanges().forEach(change => {
                     const data = change.doc.data();
                     const id = change.doc.id;
-                    if (id === localPlayer.id) {
+                    
+                    if (data.roomId !== currentRoomId) return;
+                    if (id === currentUser.uid) {
                         localPlayer.hp = data.hp ?? 100;
                         updateUI();
                         return;
                     }
+
                     if (change.type === "added" || change.type === "modified") {
                         if (!remotePlayers[id]) {
                             const m = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 1), new THREE.MeshPhongMaterial({ color: 0xff4444 }));
@@ -439,12 +464,16 @@
                         if (remotePlayers[id]) { scene.remove(remotePlayers[id]); delete remotePlayers[id]; }
                     }
                 });
-            }, (err) => {});
+            });
 
+            // Ouvir apenas paredes da mesma sala
             onSnapshot(wallsCol, (snap) => {
                 snap.docChanges().forEach(change => {
                     const id = change.doc.id;
                     const data = change.doc.data();
+
+                    if (data.roomId !== currentRoomId) return;
+
                     if (change.type === "added" || change.type === "modified") {
                         if (!wallObjects[id]) {
                             const wall = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 0.4), new THREE.MeshPhongMaterial({ color: 0x795548 }));
@@ -455,31 +484,27 @@
                         wallObjects[id].rotation.y = data.ry;
                         wallObjects[id].userData = { id, type: 'wall', hp: data.hp };
                     } else if (change.type === "removed") {
-                        if (wallObjects[id]) { 
-                            scene.remove(wallObjects[id]); 
-                            delete wallObjects[id]; 
-                        }
+                        if (wallObjects[id]) { scene.remove(wallObjects[id]); delete wallObjects[id]; }
                     }
                 });
-            }, (err) => {});
+            });
 
+            // Enviar posição com Room ID
             setInterval(() => {
                 if (!db || !currentUser) return;
-                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', localPlayer.id), {
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', currentUser.uid), {
                     pos: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
                     hp: localPlayer.hp,
+                    roomId: currentRoomId,
                     ts: Date.now()
                 }, { merge: true }).catch(()=>{});
-            }, 150);
+            }, 100);
         }
 
         function setupControls() {
             document.addEventListener('pointerlockchange', () => {
-                const overlay = document.getElementById('start-overlay');
-                if (document.pointerLockElement === renderer.domElement) {
-                    overlay.style.display = 'none';
-                } else {
-                    overlay.style.display = 'flex';
+                if (document.pointerLockElement !== renderer.domElement) {
+                    document.getElementById('start-overlay').style.display = 'flex';
                 }
             });
 
@@ -540,10 +565,8 @@
             document.body.appendChild(flash); setTimeout(() => flash.remove(), 50);
 
             raycaster.setFromCamera({x:0, y:0}, camera);
-            // Alcance maior para a picareta (8 unidades) e tiro (100 unidades)
             raycaster.far = localPlayer.currentTool === 'pickaxe' ? 8 : 200;
 
-            // Tenta picar árvores primeiro (objetos locais)
             if (localPlayer.currentTool === 'pickaxe') {
                 trees.forEach(tree => {
                     if (camera.position.distanceTo(tree.position) < 8) {
@@ -555,34 +578,25 @@
 
             if (!db) return;
 
-            // Filtra apenas objetos que têm userData preenchido para evitar erros
             const targets = [...Object.values(remotePlayers), ...Object.values(wallObjects)];
             const hits = raycaster.intersectObjects(targets);
             
             if (hits.length > 0) {
-                const hit = hits[0];
-                const obj = hit.object;
+                const obj = hits[0].object;
                 const userData = obj.userData;
-                
                 if (!userData || !userData.id) return;
 
                 const dmg = localPlayer.currentTool === 'gun' ? 30 : 25;
 
                 if (userData.type === 'player') {
-                    const playerRef = doc(db, 'artifacts', appId, 'public', 'data', 'players', userData.id);
-                    updateDoc(playerRef, {
+                    updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', userData.id), {
                         hp: Math.max(0, (userData.hp || 100) - dmg)
-                    }).catch(e => console.error("Erro ao dar dano no player", e));
+                    }).catch(()=>{});
                 } else if (userData.type === 'wall') {
-                    const currentHp = userData.hp || 100;
-                    const newHp = currentHp - dmg;
                     const wallRef = doc(db, 'artifacts', appId, 'public', 'data', 'walls', userData.id);
-                    
-                    if (newHp <= 0) {
-                        deleteDoc(wallRef).catch(e => console.error("Erro ao deletar parede", e));
-                    } else {
-                        updateDoc(wallRef, { hp: newHp }).catch(e => console.error("Erro ao atualizar parede", e));
-                    }
+                    const newHp = (userData.hp || 100) - dmg;
+                    if (newHp <= 0) deleteDoc(wallRef).catch(()=>{});
+                    else updateDoc(wallRef, { hp: newHp }).catch(()=>{});
                 }
             }
         }
@@ -596,25 +610,10 @@
             const pos = new THREE.Vector3().copy(camera.position).add(dir);
             
             if (db && currentUser) {
-                const wallsCol = collection(db, 'artifacts', appId, 'public', 'data', 'walls');
-                addDoc(wallsCol, { 
-                    x: pos.x, 
-                    y: 1.5, 
-                    z: pos.z, 
-                    ry: camera.rotation.y, 
-                    hp: 100,
-                    owner: localPlayer.id,
-                    createdAt: Date.now()
-                }).catch(e => console.error("Erro ao construir", e));
-            } else {
-                // Modo offline
-                const id = 'local-' + Math.random();
-                const wall = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 0.4), new THREE.MeshPhongMaterial({ color: 0x795548 }));
-                wall.position.set(pos.x, 1.5, pos.z);
-                wall.rotation.y = camera.rotation.y;
-                wall.userData = { id, type: 'wall', hp: 100 };
-                scene.add(wall);
-                wallObjects[id] = wall;
+                addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'walls'), { 
+                    x: pos.x, y: 1.5, z: pos.z, ry: camera.rotation.y, 
+                    hp: 100, roomId: currentRoomId, owner: currentUser.uid
+                }).catch(()=>{});
             }
         }
 
@@ -625,7 +624,6 @@
 
         function animate() {
             requestAnimationFrame(animate);
-            
             if (safeZone.currentRadius > safeZone.targetRadius) {
                 safeZone.currentRadius -= 0.05;
                 const s = safeZone.currentRadius / 150;
