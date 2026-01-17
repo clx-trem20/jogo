@@ -7,12 +7,22 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
-        import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, updateDoc, query, where } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
 
-        // Configuração Global
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'fortnite-mobile';
+        // Configuração do Firebase fornecida pelo utilizador
+        const userFirebaseConfig = {
+            apiKey: "AIzaSyDnBEqsV1i9y86lMCxlTfEOcgYAzaeF93k",
+            authDomain: "jogo-de-tiro-be839.firebaseapp.com",
+            projectId: "jogo-de-tiro-be839",
+            storageBucket: "jogo-de-tiro-be839.firebasestorage.app",
+            messagingSenderId: "277547964145",
+            appId: "1:277547964145:web:b5345c064a0c1490743b50"
+        };
+
+        // Fallback para a configuração do ambiente se disponível, senão usa a do utilizador
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : userFirebaseConfig;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'jogo-de-tiro-be839';
         
         let db, auth;
         let scene, camera, renderer, clock, raycaster;
@@ -73,11 +83,16 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
 
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
+                // Autenticação obrigatória antes de qualquer operação no Firestore
+                const performSignIn = async () => {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                };
+                
+                await performSignIn();
 
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
@@ -86,7 +101,7 @@
                     }
                 });
             } catch (e) {
-                console.warn("Modo Offline Ativo:", e);
+                console.error("Erro Firebase:", e);
             }
 
             animate();
@@ -125,7 +140,8 @@
         }
 
         function setupNetworking() {
-            if (!db) return;
+            if (!db || !auth.currentUser) return;
+            
             const playersRef = collection(db, 'artifacts', appId, 'public', 'data', 'players');
             const wallsRef = collection(db, 'artifacts', appId, 'public', 'data', 'walls');
 
@@ -133,7 +149,6 @@
                 snapshot.docChanges().forEach(change => {
                     const data = change.doc.data();
                     if (change.doc.id === localPlayer.id) {
-                        // Se o HP no servidor mudar, atualiza localmente
                         if (data.hp !== undefined && data.hp !== localPlayer.hp) {
                             localPlayer.hp = data.hp;
                             updateHpUI();
@@ -149,11 +164,14 @@
                             remotePlayers[change.doc.id] = mesh;
                         }
                         remotePlayers[change.doc.id].position.set(data.pos.x, data.pos.y, data.pos.z);
+                        remotePlayers[change.doc.id].userData.hp = data.hp;
                     } else if (change.type === "removed") {
-                        scene.remove(remotePlayers[change.doc.id]);
-                        delete remotePlayers[change.doc.id];
+                        if(remotePlayers[change.doc.id]) {
+                            scene.remove(remotePlayers[change.doc.id]);
+                            delete remotePlayers[change.doc.id];
+                        }
                     }
-                });
+                }, (err) => console.error("Snapshot Player Error:", err));
             });
 
             onSnapshot(wallsRef, (snapshot) => {
@@ -178,18 +196,18 @@
                     } else if (change.type === "removed") {
                         if (wallObjects[id]) { scene.remove(wallObjects[id]); delete wallObjects[id]; }
                     }
-                });
+                }, (err) => console.error("Snapshot Wall Error:", err));
             });
 
             setInterval(async () => {
-                if (auth?.currentUser) {
+                if (auth.currentUser) {
                     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', localPlayer.id), {
                         pos: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
                         hp: localPlayer.hp,
                         lastUpdate: Date.now()
                     }, { merge: true });
                 }
-            }, 150);
+            }, 200);
         }
 
         function updateHpUI() {
@@ -252,6 +270,8 @@
         }
 
         async function handleAction() {
+            if (!auth.currentUser) return;
+            
             const flash = document.createElement('div');
             flash.className = 'flash-effect';
             document.body.appendChild(flash);
@@ -274,44 +294,35 @@
                     const obj = hits[0].object;
                     const data = obj.userData;
 
-                    if (data.type === 'wall' && db) {
+                    if (data.type === 'wall') {
                         const wallRef = doc(db, 'artifacts', appId, 'public', 'data', 'walls', data.id);
-                        const currentHp = data.hp || 100;
-                        const newHp = currentHp - 10;
-
+                        const newHp = (data.hp || 100) - 10;
                         obj.material.color.set(0xffffff);
                         setTimeout(() => { if(obj.material) obj.material.color.set(0x8B4513); }, 50);
-
-                        if (newHp <= 0) {
-                            await deleteDoc(wallRef);
-                        } else {
-                            await updateDoc(wallRef, { hp: newHp });
-                        }
-                    } else if (data.type === 'player' && db) {
-                        // Causar dano a outro jogador
+                        if (newHp <= 0) await deleteDoc(wallRef);
+                        else await updateDoc(wallRef, { hp: newHp });
+                    } else if (data.type === 'player') {
                         const playerRef = doc(db, 'artifacts', appId, 'public', 'data', 'players', data.id);
-                        // Aqui o servidor ou o cliente atingido processaria o dano. 
-                        // Simplificando: enviamos uma redução de HP direta.
-                        await updateDoc(playerRef, { hp: Math.max(0, (remotePlayers[data.id].userData.hp || 100) - 20) });
+                        const newHp = Math.max(0, (data.hp || 100) - 20);
+                        await updateDoc(playerRef, { hp: newHp });
                     }
                 }
             }
         }
 
         async function buildWall() {
-            if (localPlayer.wood < 10) return;
+            if (localPlayer.wood < 10 || !auth.currentUser) return;
             localPlayer.wood -= 10;
             document.getElementById('wood-val').innerText = localPlayer.wood;
             
             const dir = new THREE.Vector3(0,0,-5).applyQuaternion(camera.quaternion);
             const pos = new THREE.Vector3().copy(camera.position).add(dir);
             
-            if (db) {
-                const wallsCol = collection(db, 'artifacts', appId, 'public', 'data', 'walls');
-                await setDoc(doc(wallsCol), {
-                    x: pos.x, y: 1.5, z: pos.z, ry: camera.rotation.y, hp: 100
-                });
-            }
+            const wallsCol = collection(db, 'artifacts', appId, 'public', 'data', 'walls');
+            await setDoc(doc(wallsCol), {
+                x: pos.x, y: 1.5, z: pos.z, ry: camera.rotation.y, hp: 100,
+                ownerId: localPlayer.id
+            });
         }
 
         function animate() {
@@ -325,7 +336,7 @@
             localPlayer.velocity -= 0.008;
             camera.position.y += localPlayer.velocity;
             if (camera.position.y <= 1.8) { camera.position.y = 1.8; localPlayer.velocity = 0; localPlayer.isGrounded = true; }
-            renderer.render(scene, camera);
+            if(renderer) renderer.render(scene, camera);
         }
 
         window.addEventListener('load', () => {
@@ -344,7 +355,6 @@
         #ui-layer { position: fixed; inset: 0; pointer-events: none; display: none; }
         .ui-active { pointer-events: auto; }
         
-        /* Stats & HP */
         #stats-container { position: fixed; top: 20px; left: 20px; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
         .stat-box { background: rgba(0,0,0,0.6); padding: 8px 15px; border-radius: 5px; color: #fff; font-weight: bold; border-left: 4px solid #fcd34d; }
         #hp-container { width: 200px; height: 25px; background: rgba(0,0,0,0.6); border-radius: 5px; overflow: hidden; position: relative; border: 2px solid rgba(255,255,255,0.2); }
