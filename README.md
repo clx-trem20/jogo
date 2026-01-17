@@ -125,7 +125,7 @@
         <h1 style="font-size: 5rem; font-weight: 900; font-style: italic; letter-spacing: -2px; margin-bottom: 0;">FORTNITE</h1>
         <p style="color: #a78bfa; font-weight: bold; margin-bottom: 20px;">PC EDITION MULTIPLAYER</p>
         <div id="lobby-container">
-            <h3 id="my-id-display" style="color: #fcd34d; font-family: monospace; margin-bottom: 20px; font-size: 20px;">GERANDO ID...</h3>
+            <h3 id="my-id-display" style="color: #fcd34d; font-family: monospace; margin-bottom: 20px; font-size: 20px;">A INICIALIZAR...</h3>
             <input type="text" id="room-input" placeholder="NOME DA SALA (EX: PROS)">
             <button class="btn-play" id="play-button" onclick="joinGame()">ENTRAR NO CAMPO DE BATALHA</button>
             <p style="font-size: 12px; color: #94a3b8; margin-top: 20px;">Controlos: WASD (Mover) | SHIFT (Correr) | ESPAÇO (Saltar) | G (Consumir) | 1, 2, 3 (Itens)</p>
@@ -133,7 +133,7 @@
     </div>
     
     <div id="crosshair"></div>
-    <div id="debug-log">A aguardar sistema...</div>
+    <div id="debug-log">Sistema offline</div>
     <div id="kill-feed"></div>
     <div id="interaction-prompt">Pressiona [G] para comer cogumelo 🍄</div>
     
@@ -167,7 +167,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
-        import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, updateDoc, addDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, updateDoc, addDoc, getDoc, query, where } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
 
         // CONFIGURAÇÕES GLOBAIS
@@ -177,7 +177,7 @@
         let db, auth, currentUser;
         let scene, camera, renderer, raycaster, clock;
         let weaponGroup, stormVisual;
-        let currentRoomId = "GLOBAL"; 
+        let currentRoomId = ""; 
 
         const localPlayer = {
             hp: 100, wood: 50,
@@ -200,9 +200,6 @@
         const mushrooms = []; 
         const keys = {};
 
-        // Mostrar ID imediatamente
-        document.getElementById('my-id-display').innerText = localPlayer.visualId;
-
         function log(msg) {
             document.getElementById('debug-log').innerText = msg;
         }
@@ -210,18 +207,23 @@
         window.joinGame = async () => {
             const input = document.getElementById('room-input').value.trim();
             currentRoomId = input ? input.toUpperCase() : "GLOBAL";
-            document.getElementById('current-room-id').innerText = currentRoomId;
             
+            // Bloquear rato
             renderer.domElement.requestPointerLock();
+            
+            // UI
             document.getElementById('start-overlay').style.display = 'none';
             document.getElementById('ui-layer').style.display = 'block';
             document.getElementById('crosshair').style.display = 'block';
+            document.getElementById('current-room-id').innerText = currentRoomId;
             
             startSafeCycle();
+            
+            // Networking
             if (db && currentUser) {
                 await setupNetworking();
             } else {
-                log("A jogar em modo Offline (Sem Firebase)");
+                log("Jogando Offline (Firebase não carregou)");
             }
         };
 
@@ -270,12 +272,12 @@
             createWeaponModel();
             setupControls();
             animate();
-            log("Motor Gráfico Pronto.");
+            log("Motor 3D Pronto");
         }
 
         async function initFirebase() {
             if (!firebaseConfig) {
-                log("Sem config Firebase. Modo Offline.");
+                log("Ambiente local detetado.");
                 return;
             }
             try {
@@ -283,68 +285,85 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
 
-                const performSignIn = async () => {
+                const initAuth = async () => {
                     if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                        return await signInWithCustomToken(auth, __initial_auth_token);
+                        await signInWithCustomToken(auth, __initial_auth_token);
                     } else {
-                        return await signInAnonymously(auth);
+                        await signInAnonymously(auth);
                     }
                 };
 
-                await performSignIn();
+                await initAuth();
                 onAuthStateChanged(auth, u => { 
                     if(u) {
                         currentUser = u;
-                        log("Firebase Conectado: " + u.uid.substring(0,5));
+                        document.getElementById('my-id-display').innerText = "O TEU ID: " + u.uid.substring(0, 8).toUpperCase();
+                        log("Conectado como " + u.uid.substring(0,5));
                     }
                 });
             } catch (e) { 
                 log("Erro Firebase: " + e.message); 
-                console.error(e);
             }
         }
 
         async function setupNetworking() {
             if (!db || !currentUser) return;
 
+            // 1. Limpar estado anterior (caso troquem de sala no futuro sem recarregar)
+            Object.keys(remotePlayers).forEach(id => { scene.remove(remotePlayers[id]); delete remotePlayers[id]; });
+            Object.keys(wallObjects).forEach(id => { scene.remove(wallObjects[id]); delete wallObjects[id]; });
+
+            // 2. Referências das Coleções
             const playersCol = collection(db, 'artifacts', appId, 'public', 'data', 'players');
             const wallsCol = collection(db, 'artifacts', appId, 'public', 'data', 'walls');
 
+            // 3. Sync de Jogadores
             onSnapshot(playersCol, (snap) => {
                 snap.docChanges().forEach(change => {
                     const data = change.doc.data();
                     const id = change.doc.id;
+
+                    // Ignorar o próprio jogador na renderização remota
                     if (id === currentUser.uid) {
-                        if (data.damageTaken) {
+                        if (data.damageTaken > 0) {
                             localPlayer.hp -= data.damageTaken;
                             updateHPUI();
-                            updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', id), { damageTaken: 0 });
+                            updateDoc(doc(playersCol, id), { damageTaken: 0 });
                         }
                         return;
                     }
+
+                    // Filtrar por Sala (Manual para evitar erros de indexação complexa no Firestore)
                     if (data.roomId !== currentRoomId) {
-                        if (remotePlayers[id]) { scene.remove(remotePlayers[id]); delete remotePlayers[id]; }
+                        if (remotePlayers[id]) { 
+                            scene.remove(remotePlayers[id]); 
+                            delete remotePlayers[id]; 
+                        }
                         return;
                     }
 
                     if (change.type === "added" || change.type === "modified") {
                         if (!remotePlayers[id]) {
-                            const pGeo = new THREE.CapsuleGeometry(0.5, 1, 4, 8);
+                            const pGeo = new THREE.CapsuleGeometry(0.5, 1.2, 4, 8);
                             const pMat = new THREE.MeshStandardMaterial({ color: 0xff4444 });
                             const p = new THREE.Mesh(pGeo, pMat);
                             scene.add(p);
                             remotePlayers[id] = p;
                         }
                         remotePlayers[id].position.set(data.pos.x, data.pos.y - 0.9, data.pos.z);
+                    } else if (change.type === "removed") {
+                        if (remotePlayers[id]) { scene.remove(remotePlayers[id]); delete remotePlayers[id]; }
                     }
                 });
                 document.getElementById('player-count').innerText = Object.keys(remotePlayers).length + 1;
-            }, (err) => console.log("Erro Sync Jogadores"));
+            }, (err) => console.error("Erro Jogadores:", err));
 
+            // 4. Sync de Paredes
             onSnapshot(wallsCol, (snap) => {
                 snap.docChanges().forEach(change => {
                     const data = change.doc.data();
                     const id = change.doc.id;
+
                     if (data.roomId !== currentRoomId) return;
 
                     if (change.type === "added" || change.type === "modified") {
@@ -365,17 +384,19 @@
                     }
                 });
                 document.getElementById('wall-count').innerText = Object.keys(wallObjects).length;
-            }, (err) => console.log("Erro Sync Paredes"));
+            }, (err) => console.error("Erro Paredes:", err));
 
+            // 5. Loop de Update de Posição
             setInterval(() => {
                 if(!currentUser) return;
-                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', currentUser.uid), {
+                setDoc(doc(playersCol, currentUser.uid), {
                     pos: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
                     roomId: currentRoomId,
                     visualId: localPlayer.visualId,
-                    ts: Date.now()
+                    ts: Date.now(),
+                    hp: localPlayer.hp
                 }, { merge: true });
-            }, 500);
+            }, 300);
         }
 
         function generateTrees() {
@@ -437,7 +458,7 @@
             const dist = Math.sqrt(Math.pow(camera.position.x - safeZone.centerX, 2) + Math.pow(camera.position.z - safeZone.centerZ, 2));
             const warning = document.getElementById('storm-warning');
             if (dist > safeZone.currentRadius) {
-                localPlayer.hp -= 3;
+                localPlayer.hp -= 2;
                 warning.style.display = 'block';
                 updateHPUI();
             } else {
@@ -448,11 +469,13 @@
         async function handleAction() {
             if (localPlayer.currentTool === 'build') { buildWall(); return; }
 
+            // Efeito Visual
             const f = document.createElement('div'); f.className = 'flash';
             document.body.appendChild(f); setTimeout(()=>f.remove(), 40);
 
             raycaster.setFromCamera({x:0, y:0}, camera);
 
+            // Coletar Madeira
             if (localPlayer.currentTool === 'pickaxe') {
                 trees.forEach(t => {
                     if (camera.position.distanceTo(t.position) < 7) {
@@ -464,12 +487,14 @@
                 });
             }
 
+            // Atacar Jogadores/Paredes
             const hits = raycaster.intersectObjects([...Object.values(wallObjects), ...Object.values(remotePlayers)]);
 
             if (hits.length > 0) {
                 const target = hits[0].object;
-                const damage = 10; 
+                const damage = (localPlayer.currentTool === 'gun') ? 20 : 10; 
 
+                // Feedback visual de acerto
                 const oldColor = target.material.color.getHex();
                 target.material.color.setHex(0xffffff);
                 setTimeout(() => target.material.color.setHex(oldColor), 60);
@@ -486,7 +511,10 @@
                 } else if (db) {
                     for (const [id, mesh] of Object.entries(remotePlayers)) {
                         if (mesh === target) {
-                            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', id), { damageTaken: damage });
+                            const pDoc = doc(db, 'artifacts', appId, 'public', 'data', 'players', id);
+                            const snap = await getDoc(pDoc);
+                            const currentDmg = (snap.data().damageTaken || 0) + damage;
+                            await updateDoc(pDoc, { damageTaken: currentDmg });
                             break;
                         }
                     }
@@ -505,18 +533,18 @@
                         x: pos.x, y: 1.5, z: pos.z, ry: camera.rotation.y,
                         roomId: currentRoomId, hp: 100, ts: Date.now()
                     });
-                } catch(e) { log("Erro Construção DB"); }
+                    localPlayer.wood -= 10;
+                    document.getElementById('wood-val').innerText = localPlayer.wood;
+                } catch(e) { console.error("Erro Construção:", e); }
             } else {
-                // Modo offline build local apenas
                 const wallGeo = new THREE.BoxGeometry(4, 3, 0.4);
                 const wallMat = new THREE.MeshStandardMaterial({ color: 0x8b4513 });
                 const wall = new THREE.Mesh(wallGeo, wallMat);
                 wall.position.set(pos.x, 1.5, pos.z);
                 wall.rotation.y = camera.rotation.y;
                 scene.add(wall);
+                localPlayer.wood -= 10;
             }
-            localPlayer.wood -= 10;
-            document.getElementById('wood-val').innerText = localPlayer.wood;
         }
 
         function setupControls() {
@@ -556,7 +584,10 @@
             const hp = Math.max(0, localPlayer.hp);
             document.getElementById('hp-bar-fill').style.width = Math.min(100, hp) + "%";
             document.getElementById('hp-val').innerText = Math.ceil(hp);
-            if (hp <= 0) { alert("Eliminado!"); location.reload(); }
+            if (hp <= 0) { 
+                alert("Foste eliminado! Regressando ao lobby..."); 
+                location.reload(); 
+            }
         }
 
         function checkCollision(newPos) {
@@ -607,7 +638,7 @@
                     if (dist < 2.5) { 
                         nearMushroom = true;
                         if (keys['KeyG'] && localPlayer.hp < 100) {
-                            localPlayer.hp = Math.min(100, localPlayer.hp + 10);
+                            localPlayer.hp = Math.min(100, localPlayer.hp + 15);
                             updateHPUI();
                             scene.remove(mush);
                             mushrooms.splice(i, 1);
