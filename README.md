@@ -248,7 +248,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
-        import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, updateDoc, addDoc } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
 
         // Configurações do Firebase
@@ -273,20 +273,19 @@
             currentTool: 'pickaxe'
         };
 
-        // Lógica da Safe Zone
         const safeZone = {
             currentRadius: 150,
             targetRadius: 150,
-            phases: [150, 100, 50, 10], // Tamanhos das fases
+            phases: [150, 100, 50, 10], 
             currentPhase: 0,
-            timer: 300, // 5 minutos em segundos
+            timer: 300, 
             damage: 2,
             centerX: 0,
             centerZ: 0
         };
 
         const remotePlayers = {};
-        const wallObjects = {};
+        const wallObjects = {}; // Mapeia ID -> Mesh da parede
         const trees = [];
         const keys = {};
 
@@ -319,7 +318,6 @@
             ground.rotation.x = -Math.PI / 2;
             scene.add(ground);
 
-            // Criar o círculo visual da Storm
             const stormGeo = new THREE.RingGeometry(148, 150, 64);
             const stormMat = new THREE.MeshBasicMaterial({ color: 0x3b82f6, side: THREE.DoubleSide });
             stormCircle = new THREE.Mesh(stormGeo, stormMat);
@@ -343,18 +341,15 @@
             animate();
         }
 
-        // Timer da Safe Zone
         function startSafeTimer() {
             setInterval(() => {
                 if (safeZone.timer > 0) {
                     safeZone.timer--;
                 } else {
-                    // Fecha a safe se ainda houver fases
                     if (safeZone.currentPhase < 3) {
                         safeZone.currentPhase++;
                         safeZone.targetRadius = safeZone.phases[safeZone.currentPhase];
-                        safeZone.timer = 300; // Reinicia 5 minutos
-                        
+                        safeZone.timer = 300; 
                         document.getElementById('safe-phase').innerText = `Safe Zone - Fase ${Math.min(safeZone.currentPhase + 1, 3)}/3`;
                     }
                 }
@@ -381,7 +376,6 @@
                 warning.style.display = 'block';
                 updateUI();
                 if (localPlayer.hp <= 0) {
-                    alert("Morreste na Storm!");
                     location.reload();
                 }
             } else {
@@ -454,14 +448,17 @@
                     if (change.type === "added" || change.type === "modified") {
                         if (!wallObjects[id]) {
                             const wall = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 0.4), new THREE.MeshPhongMaterial({ color: 0x795548 }));
-                            wall.position.set(data.x, data.y, data.z);
-                            wall.rotation.y = data.ry;
                             scene.add(wall);
                             wallObjects[id] = wall;
                         }
+                        wallObjects[id].position.set(data.x, data.y, data.z);
+                        wallObjects[id].rotation.y = data.ry;
                         wallObjects[id].userData = { id, type: 'wall', hp: data.hp };
                     } else if (change.type === "removed") {
-                        if (wallObjects[id]) { scene.remove(wallObjects[id]); delete wallObjects[id]; }
+                        if (wallObjects[id]) { 
+                            scene.remove(wallObjects[id]); 
+                            delete wallObjects[id]; 
+                        }
                     }
                 });
             }, (err) => {});
@@ -525,7 +522,6 @@
                 const t = new THREE.Mesh(trunkGeo, tMat); t.position.y = 2.5;
                 const l = new THREE.Mesh(leafGeo, lMat); l.position.y = 6;
                 tree.add(t, l);
-                // Árvores espalhadas por uma área maior
                 tree.position.set(Math.random() * 800 - 400, 0, Math.random() * 800 - 400);
                 scene.add(tree);
                 trees.push(tree);
@@ -544,7 +540,10 @@
             document.body.appendChild(flash); setTimeout(() => flash.remove(), 50);
 
             raycaster.setFromCamera({x:0, y:0}, camera);
+            // Alcance maior para a picareta (8 unidades) e tiro (100 unidades)
+            raycaster.far = localPlayer.currentTool === 'pickaxe' ? 8 : 200;
 
+            // Tenta picar árvores primeiro (objetos locais)
             if (localPlayer.currentTool === 'pickaxe') {
                 trees.forEach(tree => {
                     if (camera.position.distanceTo(tree.position) < 8) {
@@ -556,20 +555,34 @@
 
             if (!db) return;
 
+            // Filtra apenas objetos que têm userData preenchido para evitar erros
             const targets = [...Object.values(remotePlayers), ...Object.values(wallObjects)];
             const hits = raycaster.intersectObjects(targets);
+            
             if (hits.length > 0) {
-                const obj = hits[0].object;
-                const dmg = localPlayer.currentTool === 'gun' ? 30 : 15;
-                if (obj.userData.type === 'player') {
-                    updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', obj.userData.id), {
-                        hp: Math.max(0, (obj.userData.hp || 100) - dmg)
-                    }).catch(()=>{});
-                } else if (obj.userData.type === 'wall') {
-                    const newHp = (obj.userData.hp || 100) - dmg;
-                    const ref = doc(db, 'artifacts', appId, 'public', 'data', 'walls', obj.userData.id);
-                    if (newHp <= 0) deleteDoc(ref).catch(()=>{});
-                    else updateDoc(ref, { hp: newHp }).catch(()=>{});
+                const hit = hits[0];
+                const obj = hit.object;
+                const userData = obj.userData;
+                
+                if (!userData || !userData.id) return;
+
+                const dmg = localPlayer.currentTool === 'gun' ? 30 : 25;
+
+                if (userData.type === 'player') {
+                    const playerRef = doc(db, 'artifacts', appId, 'public', 'data', 'players', userData.id);
+                    updateDoc(playerRef, {
+                        hp: Math.max(0, (userData.hp || 100) - dmg)
+                    }).catch(e => console.error("Erro ao dar dano no player", e));
+                } else if (userData.type === 'wall') {
+                    const currentHp = userData.hp || 100;
+                    const newHp = currentHp - dmg;
+                    const wallRef = doc(db, 'artifacts', appId, 'public', 'data', 'walls', userData.id);
+                    
+                    if (newHp <= 0) {
+                        deleteDoc(wallRef).catch(e => console.error("Erro ao deletar parede", e));
+                    } else {
+                        updateDoc(wallRef, { hp: newHp }).catch(e => console.error("Erro ao atualizar parede", e));
+                    }
                 }
             }
         }
@@ -578,18 +591,30 @@
             if (localPlayer.wood < 10) return;
             localPlayer.wood -= 10;
             document.getElementById('wood-val').innerText = localPlayer.wood;
+            
             const dir = new THREE.Vector3(0, 0, -5).applyQuaternion(camera.quaternion);
             const pos = new THREE.Vector3().copy(camera.position).add(dir);
             
             if (db && currentUser) {
-                setDoc(doc(collection(db, 'artifacts', appId, 'public', 'data', 'walls')), { 
-                    x: pos.x, y: 1.5, z: pos.z, ry: camera.rotation.y, hp: 100 
-                }).catch(()=>{});
+                const wallsCol = collection(db, 'artifacts', appId, 'public', 'data', 'walls');
+                addDoc(wallsCol, { 
+                    x: pos.x, 
+                    y: 1.5, 
+                    z: pos.z, 
+                    ry: camera.rotation.y, 
+                    hp: 100,
+                    owner: localPlayer.id,
+                    createdAt: Date.now()
+                }).catch(e => console.error("Erro ao construir", e));
             } else {
+                // Modo offline
+                const id = 'local-' + Math.random();
                 const wall = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 0.4), new THREE.MeshPhongMaterial({ color: 0x795548 }));
                 wall.position.set(pos.x, 1.5, pos.z);
                 wall.rotation.y = camera.rotation.y;
+                wall.userData = { id, type: 'wall', hp: 100 };
                 scene.add(wall);
+                wallObjects[id] = wall;
             }
         }
 
@@ -601,10 +626,8 @@
         function animate() {
             requestAnimationFrame(animate);
             
-            // Suavizar o fecho da Safe Zone visualmente
             if (safeZone.currentRadius > safeZone.targetRadius) {
                 safeZone.currentRadius -= 0.05;
-                // Atualizar escala do anel visual
                 const s = safeZone.currentRadius / 150;
                 stormCircle.scale.set(s, s, 1);
             }
