@@ -25,6 +25,7 @@
             display: block;
         }
 
+        /* Camada de Início - A "Tela Roxa" */
         #start-overlay {
             position: fixed;
             inset: 0;
@@ -167,7 +168,7 @@
     <div id="start-overlay">
         <h1>FORTNITE PC EDITION</h1>
         <div id="instructions">
-            <p><strong>CLIQUE PARA JOGAR</strong></p>
+            <p><strong>CLIQUE EM QUALQUER LUGAR PARA ENTRAR</strong></p>
             <br>
             <p>W, A, S, D - Mover | ESPAÇO - Saltar</p>
             <p>CLIQUE ESQUERDO - Disparar ou Usar Picareta</p>
@@ -204,18 +205,18 @@
         import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
 
-        // Variáveis Globais de Ambiente
+        // Configurações do Firebase
         const firebaseConfig = JSON.parse(__firebase_config);
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'fortnite-pc-stable';
         
         let db, auth, currentUser;
         let scene, camera, renderer, clock, raycaster;
         let weaponGroup;
+        let gameStarted = false;
         
         const localPlayer = {
-            id: null,
+            id: 'local-' + Math.random().toString(36).substr(2, 5),
             hp: 100,
-            maxHp: 100,
             wood: 50,
             pos: { x: Math.random() * 20 - 10, y: 1.8, z: Math.random() * 20 - 10 },
             velocity: 0,
@@ -228,12 +229,7 @@
         const trees = [];
         const keys = {};
 
-        // Inicialização do Jogo
-        async function init() {
-            initThreeJS();
-            await initFirebase();
-        }
-
+        // 1. Inicializar Motor Gráfico (Não depende do Firebase)
         function initThreeJS() {
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x87ceeb);
@@ -257,7 +253,7 @@
             scene.add(sun);
 
             const ground = new THREE.Mesh(
-                new THREE.PlaneGeometry(1000, 1000),
+                new THREE.PlaneGeometry(2000, 2000),
                 new THREE.MeshPhongMaterial({ color: 0x4caf50 })
             );
             ground.rotation.x = -Math.PI / 2;
@@ -269,13 +265,13 @@
             animate();
         }
 
+        // 2. Inicializar Firebase (Silencioso em background)
         async function initFirebase() {
-            const app = initializeApp(firebaseConfig);
-            db = getFirestore(app);
-            auth = getAuth(app);
-
-            // Regra 3: Autenticar PRIMEIRO
             try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token);
                 } else {
@@ -286,31 +282,28 @@
                     if (user) {
                         currentUser = user;
                         localPlayer.id = user.uid;
-                        console.log("Autenticado como:", user.uid);
                         setupNetworking();
                     }
                 });
             } catch (e) {
-                console.error("Erro na autenticação:", e);
+                console.warn("Ligação ao Firebase falhou. Modo offline ativo.", e);
             }
         }
 
-        // Caminhos de coleção seguindo a Regra 1
-        const getPlayersCol = () => collection(db, 'artifacts', appId, 'public', 'data', 'players');
-        const getWallsCol = () => collection(db, 'artifacts', appId, 'public', 'data', 'walls');
-
         function setupNetworking() {
-            if (!currentUser) return;
+            if (!db || !currentUser) return;
 
-            // Snapshots com tratamento de erro obrigatório
-            onSnapshot(getPlayersCol(), (snap) => {
+            const playersCol = collection(db, 'artifacts', appId, 'public', 'data', 'players');
+            const wallsCol = collection(db, 'artifacts', appId, 'public', 'data', 'walls');
+
+            onSnapshot(playersCol, (snap) => {
                 snap.docChanges().forEach(change => {
                     const data = change.doc.data();
                     const id = change.doc.id;
                     if (id === localPlayer.id) {
                         localPlayer.hp = data.hp ?? 100;
                         updateUI();
-                        if (localPlayer.hp <= 0) window.location.reload();
+                        if (localPlayer.hp <= 0) location.reload();
                         return;
                     }
                     if (change.type === "added" || change.type === "modified") {
@@ -326,9 +319,9 @@
                         if (remotePlayers[id]) { scene.remove(remotePlayers[id]); delete remotePlayers[id]; }
                     }
                 });
-            }, (err) => console.error("Erro nos Players:", err));
+            }, (err) => console.log("Firebase Players Busy"));
 
-            onSnapshot(getWallsCol(), (snap) => {
+            onSnapshot(wallsCol, (snap) => {
                 snap.docChanges().forEach(change => {
                     const id = change.doc.id;
                     const data = change.doc.data();
@@ -347,17 +340,16 @@
                         if (wallObjects[id]) { scene.remove(wallObjects[id]); delete wallObjects[id]; }
                     }
                 });
-            }, (err) => console.error("Erro nas Paredes:", err));
+            }, (err) => console.log("Firebase Walls Busy"));
 
-            // Ciclo de atualização de posição
             setInterval(() => {
-                if (!currentUser) return;
+                if (!db || !currentUser) return;
                 setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', localPlayer.id), {
                     pos: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
                     hp: localPlayer.hp,
                     ts: Date.now()
-                }, { merge: true }).catch(e => console.error("Update pos fail:", e));
-            }, 200);
+                }, { merge: true }).catch(() => {});
+            }, 100);
         }
 
         function setupPointerLock() {
@@ -366,15 +358,23 @@
             const ui = document.getElementById('ui-layer');
             const crosshair = document.getElementById('crosshair');
 
-            overlay.addEventListener('click', () => canvas.requestPointerLock());
+            // CORREÇÃO CRUCIAL: Remover tela roxa imediatamente ao clicar
+            overlay.addEventListener('click', () => {
+                canvas.requestPointerLock();
+                // Forçar desaparecimento se o evento PointerLock demorar
+                overlay.style.opacity = '0';
+                setTimeout(() => overlay.style.display = 'none', 500);
+            });
 
             document.addEventListener('pointerlockchange', () => {
                 if (document.pointerLockElement === canvas) {
                     overlay.style.display = 'none';
                     ui.style.display = 'block';
                     crosshair.style.display = 'block';
+                    gameStarted = true;
                 } else {
                     overlay.style.display = 'flex';
+                    overlay.style.opacity = '1';
                     ui.style.display = 'none';
                     crosshair.style.display = 'none';
                 }
@@ -388,9 +388,15 @@
                 }
             });
 
-            window.addEventListener('keydown', (e) => { keys[e.code] = true; if(e.code === 'KeyQ') buildWall(); if(e.code === 'Digit1' || e.code === 'Digit2' || e.code === 'KeyE') swapTool(); });
+            window.addEventListener('keydown', (e) => { 
+                keys[e.code] = true; 
+                if(e.code === 'KeyQ') buildWall(); 
+                if(e.code === 'Digit1' || e.code === 'Digit2' || e.code === 'KeyE') swapTool(); 
+            });
             window.addEventListener('keyup', (e) => keys[e.code] = false);
-            window.addEventListener('mousedown', (e) => { if(document.pointerLockElement === canvas && e.button === 0) handleAction(); });
+            window.addEventListener('mousedown', (e) => { 
+                if(document.pointerLockElement === canvas && e.button === 0) handleAction(); 
+            });
         }
 
         function createWeaponModel() {
@@ -409,12 +415,12 @@
             const leafGeo = new THREE.ConeGeometry(2, 6);
             const tMat = new THREE.MeshPhongMaterial({ color: 0x5d4037 });
             const lMat = new THREE.MeshPhongMaterial({ color: 0x2e7d32 });
-            for (let i = 0; i < 50; i++) {
+            for (let i = 0; i < 60; i++) {
                 const tree = new THREE.Group();
                 const t = new THREE.Mesh(trunkGeo, tMat); t.position.y = 2.5;
                 const l = new THREE.Mesh(leafGeo, lMat); l.position.y = 6;
                 tree.add(t, l);
-                tree.position.set(Math.random() * 200 - 100, 0, Math.random() * 200 - 100);
+                tree.position.set(Math.random() * 400 - 200, 0, Math.random() * 400 - 200);
                 scene.add(tree);
                 trees.push(tree);
             }
@@ -428,7 +434,6 @@
         }
 
         async function handleAction() {
-            if (!currentUser) return;
             const flash = document.createElement('div'); flash.className = 'flash-effect';
             document.body.appendChild(flash); setTimeout(() => flash.remove(), 50);
 
@@ -443,31 +448,45 @@
                 });
             }
 
+            if (!db) return; // Proteção modo offline
+
             const targets = [...Object.values(remotePlayers), ...Object.values(wallObjects)];
             const hits = raycaster.intersectObjects(targets);
             if (hits.length > 0) {
                 const obj = hits[0].object;
                 const dmg = localPlayer.currentTool === 'gun' ? 30 : 15;
                 if (obj.userData.type === 'player') {
-                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', obj.userData.id), {
+                    updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', obj.userData.id), {
                         hp: Math.max(0, (obj.userData.hp || 100) - dmg)
-                    });
+                    }).catch(()=>{});
                 } else if (obj.userData.type === 'wall') {
                     const newHp = (obj.userData.hp || 100) - dmg;
                     const ref = doc(db, 'artifacts', appId, 'public', 'data', 'walls', obj.userData.id);
-                    if (newHp <= 0) await deleteDoc(ref);
-                    else await updateDoc(ref, { hp: newHp });
+                    if (newHp <= 0) deleteDoc(ref).catch(()=>{});
+                    else updateDoc(ref, { hp: newHp }).catch(()=>{});
                 }
             }
         }
 
         async function buildWall() {
-            if (localPlayer.wood < 10 || !currentUser) return;
+            if (localPlayer.wood < 10) return;
             localPlayer.wood -= 10;
             document.getElementById('wood-val').innerText = localPlayer.wood;
+            
             const dir = new THREE.Vector3(0, 0, -5).applyQuaternion(camera.quaternion);
             const pos = new THREE.Vector3().copy(camera.position).add(dir);
-            await setDoc(doc(getWallsCol()), { x: pos.x, y: 1.5, z: pos.z, ry: camera.rotation.y, hp: 100 });
+            
+            if (db && currentUser) {
+                setDoc(doc(collection(db, 'artifacts', appId, 'public', 'data', 'walls')), { 
+                    x: pos.x, y: 1.5, z: pos.z, ry: camera.rotation.y, hp: 100 
+                }).catch(()=>{});
+            } else {
+                // Feedback visual local mesmo offline
+                const wall = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 0.4), new THREE.MeshPhongMaterial({ color: 0x795548 }));
+                wall.position.set(pos.x, 1.5, pos.z);
+                wall.rotation.y = camera.rotation.y;
+                scene.add(wall);
+            }
         }
 
         function updateUI() {
@@ -494,8 +513,13 @@
             renderer.render(scene, camera);
         }
 
-        window.onload = init;
+        window.onload = () => {
+            initThreeJS();
+            initFirebase();
+        };
+
         window.onresize = () => {
+            if (!camera) return;
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
