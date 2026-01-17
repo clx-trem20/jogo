@@ -37,6 +37,7 @@
             text-transform: uppercase; letter-spacing: 2px; transition: transform 0.2s;
         }
         .btn-play:hover { transform: scale(1.03); filter: brightness(1.1); }
+        .btn-play:disabled { background: #444; cursor: not-allowed; opacity: 0.7; }
 
         /* Interface de Jogo */
         #ui-layer { position: fixed; inset: 0; pointer-events: none; display: none; z-index: 10; }
@@ -127,13 +128,13 @@
         <div id="lobby-container">
             <h3 id="my-id-display" style="color: #fcd34d; font-family: monospace; margin-bottom: 20px; font-size: 20px;">A LIGAR AO SERVIDOR...</h3>
             <input type="text" id="room-input" placeholder="NOME DA SALA (EX: PROS)">
-            <button class="btn-play" id="play-button" onclick="joinGame()">ENTRAR NO CAMPO DE BATALHA</button>
+            <button class="btn-play" id="play-button" onclick="joinGame()" disabled>AGUARDE LIGAÇÃO...</button>
             <p style="font-size: 12px; color: #94a3b8; margin-top: 20px;">Controlos: WASD (Mover) | SHIFT (Correr) | ESPAÇO (Saltar) | G (Consumir) | 1, 2, 3 (Itens)</p>
         </div>
     </div>
     
     <div id="crosshair"></div>
-    <div id="debug-log">Sistema offline</div>
+    <div id="debug-log">Inicializando motor...</div>
     <div id="kill-feed"></div>
     <div id="interaction-prompt">Pressiona [G] para comer cogumelo 🍄</div>
     
@@ -167,7 +168,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
-        import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, updateDoc, addDoc, getDoc, query, where } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, updateDoc, addDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
 
         // CONFIGURAÇÕES GLOBAIS
@@ -206,22 +207,14 @@
         }
 
         window.joinGame = async () => {
-            if (isJoining) return;
+            if (isJoining || !currentUser) return;
             isJoining = true;
 
             const input = document.getElementById('room-input').value.trim();
             currentRoomId = input ? input.toUpperCase() : "GLOBAL";
             
-            // UI de carregamento
             document.getElementById('play-button').innerText = "A ENTRAR...";
             
-            // Aguardar pelo Auth se ainda estiver a inicializar
-            let attempts = 0;
-            while (!currentUser && attempts < 20) {
-                await new Promise(r => setTimeout(r, 250));
-                attempts++;
-            }
-
             // Iniciar Jogo
             renderer.domElement.requestPointerLock();
             document.getElementById('start-overlay').style.display = 'none';
@@ -233,8 +226,7 @@
             
             if (db && currentUser) {
                 await setupNetworking();
-            } else {
-                log("Jogando Offline (Modo Convidado)");
+                log("Online: Sala " + currentRoomId);
             }
         };
 
@@ -283,52 +275,64 @@
             createWeaponModel();
             setupControls();
             animate();
-            log("Gráficos Prontos");
         }
 
         async function initFirebase() {
             if (!firebaseConfig) {
-                log("Configuração Firebase ausente.");
+                log("Aviso: Configuração Firebase não encontrada.");
+                document.getElementById('play-button').innerText = "JOGAR OFFLINE";
+                document.getElementById('play-button').disabled = false;
                 return;
             }
+
             try {
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
 
-                onAuthStateChanged(auth, u => { 
-                    if(u) {
+                // Listener de Auth
+                onAuthStateChanged(auth, (u) => {
+                    if (u) {
                         currentUser = u;
                         const shortId = u.uid.substring(0, 8).toUpperCase();
                         document.getElementById('my-id-display').innerText = "O TEU ID: " + shortId;
-                        log("Ligado: " + shortId);
+                        document.getElementById('play-button').innerText = "ENTRAR NO CAMPO DE BATALHA";
+                        document.getElementById('play-button').disabled = false;
+                        log("Firebase Ligado.");
                     } else {
-                        log("A autenticar...");
-                        signInAnonymously(auth).catch(e => log("Erro Auth: " + e.message));
+                        attemptLogin();
                     }
                 });
 
-                // Tentar login imediato se o token existir
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
+                async function attemptLogin() {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (e) {
+                        log("Erro ao ligar. Tentando novamente...");
+                        setTimeout(attemptLogin, 2000);
+                    }
                 }
 
-            } catch (e) { 
-                log("Erro Firebase: " + e.message); 
+                attemptLogin();
+
+            } catch (e) {
+                log("Erro Firebase: " + e.message);
+                document.getElementById('play-button').innerText = "ERRO - JOGAR OFFLINE";
+                document.getElementById('play-button').disabled = false;
             }
         }
 
         async function setupNetworking() {
             if (!db || !currentUser) return;
 
-            // Reset local
-            Object.keys(remotePlayers).forEach(id => { scene.remove(remotePlayers[id]); delete remotePlayers[id]; });
-            Object.keys(wallObjects).forEach(id => { scene.remove(wallObjects[id]); delete wallObjects[id]; });
-
             const playersCol = collection(db, 'artifacts', appId, 'public', 'data', 'players');
             const wallsCol = collection(db, 'artifacts', appId, 'public', 'data', 'walls');
 
-            // Sync Jogadores
+            // Escutar Jogadores
             onSnapshot(playersCol, (snap) => {
                 snap.docChanges().forEach(change => {
                     const data = change.doc.data();
@@ -362,9 +366,9 @@
                     }
                 });
                 document.getElementById('player-count').innerText = Object.keys(remotePlayers).length + 1;
-            }, (err) => console.error("Erro Jogadores:", err));
+            }, (err) => log("Erro Rede Jogadores"));
 
-            // Sync Paredes
+            // Escutar Paredes
             onSnapshot(wallsCol, (snap) => {
                 snap.docChanges().forEach(change => {
                     const data = change.doc.data();
@@ -390,7 +394,7 @@
                     }
                 });
                 document.getElementById('wall-count').innerText = Object.keys(wallObjects).length;
-            }, (err) => console.error("Erro Paredes:", err));
+            }, (err) => log("Erro Rede Paredes"));
 
             // Heartbeat
             setInterval(() => {
@@ -585,7 +589,7 @@
         function updateHPUI() {
             const hp = Math.max(0, localPlayer.hp);
             document.getElementById('hp-bar-fill').style.width = Math.min(100, hp) + "%";
-            document.getElementById('hp-val').innerText = Math.ceil(hp);
+            document.getElementById('hp-text').innerText = `${Math.ceil(hp)} HP`;
             if (hp <= 0) { 
                 alert("Foste eliminado! Regressando ao lobby..."); 
                 location.reload(); 
